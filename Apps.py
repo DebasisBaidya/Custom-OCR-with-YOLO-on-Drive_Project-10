@@ -8,11 +8,11 @@ import os
 
 # ✅ Load YOLOv5 model
 def load_model():
-    model_path = "best.onnx"  # Update this path if your model is elsewhere
+    model_path = "best.onnx"
     if not os.path.exists(model_path):
-        st.error(f"❌ Model not found at {model_path}")
+        st.error(f"Model not found at {model_path}")
         st.stop()
-    net = cv2.dnn.readNetFromONNX(model_path)
+    net = cv2.dnn.readNet(model_path)
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
