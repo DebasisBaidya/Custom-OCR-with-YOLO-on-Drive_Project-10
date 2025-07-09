@@ -30,7 +30,7 @@ def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
     input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
-    input_img[0:h, 0:w] = image
+    input_img[:h, :w] = image
     blob = cv2.dnn.blobFromImage(input_img, 1/255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
@@ -60,9 +60,10 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ Extract, group, and align OCR per row
+# ✅ Final fix: build rows based on OCR label logic
 def extract_fields_grouped(image, boxes, indices, class_ids, reader):
-    detections = []
+    rows = []
+    last_row = None
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
@@ -85,60 +86,34 @@ def extract_fields_grouped(image, boxes, indices, class_ids, reader):
         except:
             text = ""
 
-        if text:
-            detections.append({
-                "label": label,
-                "text": text,
-                "cy": y + h // 2,
-                "x": x
-            })
+        if not text:
+            continue
 
-    # ✅ Group by vertical position (y-center)
-    detections.sort(key=lambda d: d["cy"])
-    grouped = []
-    threshold = 20  # tighter grouping to avoid merge across rows
+        # 🔄 Build row logic
+        if label == "Test Name":
+            if last_row and not (last_row["Value"] or last_row["Units"] or last_row["Reference Range"]):
+                last_row["Test Name"] += " " + text
+            else:
+                last_row = {"Test Name": text, "Value": "", "Units": "", "Reference Range": ""}
+                rows.append(last_row)
+        else:
+            if not last_row or (last_row["Value"] or last_row["Units"] or last_row["Reference Range"]):
+                last_row = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+                rows.append(last_row)
+            last_row[label] = text
 
-    for det in detections:
-        placed = False
-        for group in grouped:
-            if abs(group["cy"] - det["cy"]) < threshold:
-                group["items"].append(det)
-                group["cy_vals"].append(det["cy"])
-                group["cy"] = int(np.mean(group["cy_vals"]))
-                placed = True
-                break
-        if not placed:
-            grouped.append({
-                "cy": det["cy"],
-                "cy_vals": [det["cy"]],
-                "items": [det]
-            })
+    return pd.DataFrame(rows)
 
-    # ✅ Build table per row
-    rows = []
-    for group in grouped:
-        row = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
-        for item in sorted(group["items"], key=lambda i: i["x"]):
-            if item["label"] == "Test Name":
-                row["Test Name"] += " " + item["text"]
-            elif item["label"] in row and not row[item["label"]]:
-                row[item["label"]] = item["text"]
-        row["Test Name"] = row["Test Name"].strip()
-        rows.append(row)
-
-    df = pd.DataFrame(rows)
-    return df
-
-# ✅ Draw bounding boxes
+# ✅ Draw YOLO bounding boxes
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI
+# ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("🧾 Medical Lab Report OCR (YOLOv5 + EasyOCR + Final Fix ✅)")
+st.title("🧾 Medical Lab Report OCR (YOLOv5 + EasyOCR + Final Row Fix ✅)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG report(s)", type=["jpg"], accept_multiple_files=True)
 
@@ -169,4 +144,4 @@ if uploaded_files:
                            mime="text/csv")
 
         boxed_image = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_image, caption="📦 Detected Fields", use_container_width=True)
+        st.image(boxed_image, caption="📦 YOLO Detected Fields", use_container_width=True)
