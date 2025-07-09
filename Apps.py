@@ -8,7 +8,7 @@ import os
 
 # ✅ Load YOLOv5 ONNX model
 def load_model():
-    model_path = "Model6/weights/best.onnx"
+    model_path = "best.onnx"
     if not os.path.exists(model_path):
         st.error(f"Model not found at {model_path}")
         st.stop()
