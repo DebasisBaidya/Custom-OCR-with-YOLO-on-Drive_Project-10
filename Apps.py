@@ -9,6 +9,14 @@ import streamlit as st
 import os
 from PIL import Image
 
+# ✅ Set Tesseract path (Windows only)
+py.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# ✅ Check if Tesseract is installed
+if not os.path.exists(py.pytesseract.tesseract_cmd):
+    st.error("❌ Tesseract not found. Please install Tesseract OCR and update the path in the script.")
+    st.stop()
+
 # 📌 Task 1.1: Load YOLO model from repo
 def load_yolo_model():
     model_path = "best.onnx"
@@ -16,7 +24,7 @@ def load_yolo_model():
         st.error(f"Model not found at {model_path}. Please check the path or upload the model.")
         st.stop()
     try:
-        model = cv2.dnn.readNet(model_path)  # Automatically detects ONNX
+        model = cv2.dnn.readNet(model_path)
         model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
         return model
