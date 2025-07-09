@@ -1,4 +1,4 @@
-# ✅ Advanced OCR App: YOLOv5 + EasyOCR + PDF + Row-wise Grouping + Range Highlight
+# ✅ Advanced OCR App: YOLOv5 + EasyOCR + PDF + Smart Row Alignment + Range Highlight
 
 import cv2
 import numpy as np
@@ -63,49 +63,51 @@ def preprocess_crop(crop):
     _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     return cv2.bitwise_not(thresh)
 
-# ✅ OCR Extraction + Row-wise Grouping
-def extract_fields_rowwise(image, boxes, indices, class_ids, reader):
-    box_mapping = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
-    items = []
-    for idx in indices.flatten():
-        x, y, w, h = boxes[idx]
+# ✅ OCR Extraction + Smart Row Mapping
+def extract_fields_smart(image, boxes, indices, class_ids, reader):
+    field_labels = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
+    detections = []
+
+    for i in indices.flatten():
+        x, y, w, h = boxes[i]
         crop = image[y:y+h, x:x+w]
         roi = preprocess_crop(crop)
         text = " ".join(reader.readtext(roi, detail=0)).strip()
         if text:
-            items.append({
-                "label_id": class_ids[idx],
-                "label": box_mapping.get(class_ids[idx], "Unknown"),
+            detections.append({
+                "label": field_labels.get(class_ids[i], f"Class {class_ids[i]}"),
                 "text": text,
                 "x": x,
-                "y": y
+                "y": y,
+                "cx": x + w//2,
+                "cy": y + h//2
             })
 
-    # ✅ Group items by row (y-axis proximity)
-    items.sort(key=lambda i: i["y"])
-    grouped_rows = []
-    threshold = 40
-    for item in items:
-        matched = False
-        for row in grouped_rows:
-            if abs(row["y"] - item["y"]) < threshold:
-                row["fields"].append(item)
-                matched = True
+    # ✅ Group into rows using vertical clustering
+    detections.sort(key=lambda d: d["cy"])
+    rows = []
+    row_thresh = 35
+
+    for det in detections:
+        placed = False
+        for row in rows:
+            if abs(row["cy"] - det["cy"]) <= row_thresh:
+                row["fields"].append(det)
+                row["cy_vals"].append(det["cy"])
+                row["cy"] = int(np.mean(row["cy_vals"]))
+                placed = True
                 break
-        if not matched:
-            grouped_rows.append({"y": item["y"], "fields": [item]})
+        if not placed:
+            rows.append({"cy": det["cy"], "fields": [det], "cy_vals": [det["cy"]]})
 
-    # ✅ Build DataFrame
-    structured_rows = []
-    for row in grouped_rows:
+    final_rows = []
+    for row in rows:
         row_data = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
-        for field in sorted(row["fields"], key=lambda f: f["x"]):
-            label = field["label"]
-            if label in row_data:
-                row_data[label] = field["text"]
-        structured_rows.append(row_data)
+        for f in row["fields"]:
+            row_data[f["label"]] = f["text"]
+        final_rows.append(row_data)
 
-    df = pd.DataFrame(structured_rows)
+    df = pd.DataFrame(final_rows)
 
     # ✅ Highlight abnormal values
     def is_abnormal(row):
@@ -136,7 +138,7 @@ def pdf_to_images(uploaded_pdf):
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("🧠 Medical Report OCR (YOLOv5 + EasyOCR + Row-wise + Range Check)")
+st.title("🧠 Medical Report OCR (YOLOv5 + EasyOCR + Smart Rows + Range Check)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG or PDF", type=["jpg", "png", "pdf"], accept_multiple_files=True)
 
@@ -157,7 +159,7 @@ if uploaded_files:
                 st.warning("⚠️ No detections found.")
                 continue
 
-            df = extract_fields_rowwise(image, boxes, indices, class_ids, reader)
+            df = extract_fields_smart(image, boxes, indices, class_ids, reader)
             st.success("✅ OCR Complete!")
 
             def highlight_abnormal(row):
