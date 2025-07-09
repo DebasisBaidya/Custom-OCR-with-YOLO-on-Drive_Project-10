@@ -6,95 +6,114 @@ from PIL import Image
 import easyocr
 import os
 import re
-from itertools import zip_longest
 
-# ✅ Load YOLOv5 ONNX Model
+# ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = 'best.onnx'
     if not os.path.exists(model_path):
         st.error(f"Model not found at {model_path}")
         st.stop()
-    net = cv2.dnn.readNet(model_path)
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    return net
+    model = cv2.dnn.readNet(model_path)
+    model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    return model
 
-# ✅ YOLOv5 Forward Pass
+# ✅ Predict using YOLO
 def predict_yolo(model, image):
-    row, col, _ = image.shape
-    max_rc = max(row, col)
+    H, W = image.shape[:2]
+    max_rc = max(H, W)
     input_image = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
-    input_image[0:row, 0:col] = image
+    input_image[0:H, 0:W] = image
     blob = cv2.dnn.blobFromImage(input_image, 1/255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
     return preds, input_image
 
-# ✅ Process YOLO Predictions
-def process_predictions(preds, input_image, conf_thresh=0.4, score_thresh=0.25):
-    boxes, confidences, class_ids = [], [], []
+# ✅ Process Predictions
+def process_predictions(preds, image, conf_threshold=0.4, score_threshold=0.25):
+    boxes = []
+    confidences = []
     detections = preds[0]
-    H, W = input_image.shape[:2]
+    H, W = image.shape[:2]
     x_factor = W / 640
     y_factor = H / 640
+
     for det in detections:
         conf = det[4]
-        if conf > conf_thresh:
+        if conf > conf_threshold:
             scores = det[5:]
             class_id = np.argmax(scores)
-            if scores[class_id] > score_thresh:
+            if scores[class_id] > score_threshold:
                 cx, cy, w, h = det[:4]
                 x = int((cx - 0.5 * w) * x_factor)
                 y = int((cy - 0.5 * h) * y_factor)
-                boxes.append([x, y, int(w * x_factor), int(h * y_factor)])
+                w = int(w * x_factor)
+                h = int(h * y_factor)
+                boxes.append([x, y, w, h])
                 confidences.append(float(conf))
-                class_ids.append(class_id)
-    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
-    return indices, boxes, class_ids
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, 0.25, 0.45)
+    return [boxes[i[0]] for i in indices]
 
-# ✅ Preprocess for OCR
-def preprocess_image(crop_img):
+# ✅ Preprocess cropped image for OCR
+def preprocess_crop(crop_img):
     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    roi = cv2.bitwise_not(thresh)
-    return roi
+    _, threshed = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return threshed
 
-# ✅ Extract Fields (with regex fix for test names)
-def extract_fields_split(image, boxes, indices, class_ids, reader):
-    field_labels = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
-    grouped = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+# ✅ OCR + Group by vertical lines (smart)
+def extract_table_by_alignment(image, boxes, reader):
+    fields = []
 
-    for i in indices.flatten():
-        x, y, w, h = boxes[i]
+    for box in boxes:
+        x, y, w, h = box
         crop = image[y:y+h, x:x+w]
-        roi = preprocess_image(crop)
-        text = "\n".join(reader.readtext(roi, detail=0)).strip()
-        label = field_labels.get(class_ids[i], None)
-        if label:
-            grouped[label] += "\n" + text  # accumulate lines
+        roi = preprocess_crop(crop)
+        text = " ".join(reader.readtext(roi, detail=0)).strip()
+        if text:
+            fields.append({
+                "text": text,
+                "x": x,
+                "y": y,
+                "cy": y + h // 2
+            })
 
-    # ✅ Smart regex-based split for Test Names
-    raw_test_name = grouped["Test Name"].strip().replace('\n', ' ')
-    names = re.findall(r'[^()]+\\(.*?\\)', raw_test_name)  # optional
-    if not names:
-        names = [t.strip() for t in re.split(r'(?<=\))', raw_test_name) if t.strip()]
+    # Group vertically by row
+    fields.sort(key=lambda d: d["cy"])
+    row_threshold = 25
+    rows = []
 
-    values = grouped["Value"].strip().split()
-    units = grouped["Units"].strip().split()
-    ranges = grouped["Reference Range"].strip().split()
+    for field in fields:
+        placed = False
+        for row in rows:
+            if abs(row["cy"] - field["cy"]) < row_threshold:
+                row["fields"].append(field)
+                row["cy_vals"].append(field["cy"])
+                row["cy"] = int(np.mean(row["cy_vals"]))
+                placed = True
+                break
+        if not placed:
+            rows.append({
+                "cy": field["cy"],
+                "cy_vals": [field["cy"]],
+                "fields": [field]
+            })
 
-    final_rows = []
-    for row in zip_longest(names, values, units, ranges, fillvalue=""):
-        final_rows.append({
-            "Test Name": row[0],
-            "Value": row[1],
-            "Units": row[2],
-            "Reference Range": row[3]
+    # Sort fields in each row left to right
+    final_data = []
+    for row in rows:
+        sorted_row = sorted(row["fields"], key=lambda d: d["x"])
+        texts = [f["text"] for f in sorted_row]
+        while len(texts) < 4:
+            texts.append("")
+        final_data.append({
+            "Test Name": texts[0],
+            "Value": texts[1],
+            "Units": texts[2],
+            "Reference Range": texts[3]
         })
 
-    df = pd.DataFrame(final_rows)
+    df = pd.DataFrame(final_data)
 
     def is_abnormal(row):
         try:
@@ -110,16 +129,16 @@ def extract_fields_split(image, boxes, indices, class_ids, reader):
     df["Abnormal"] = df.apply(is_abnormal, axis=1)
     return df
 
-# ✅ Draw YOLO Boxes
-def draw_boxes(image, boxes, indices):
-    for i in indices.flatten():
-        x, y, w, h = boxes[i]
-        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+# ✅ Draw Boxes
+def draw_boxes(image, boxes):
+    for box in boxes:
+        x, y, w, h = box
+        cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
     return image
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("🧠 Lab Report OCR (YOLOv5 + EasyOCR + Regex Split Fix)")
+st.title("📊 OCR for Lab Reports (Clustering-Based Detection)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -128,28 +147,24 @@ if uploaded_files:
     reader = easyocr.Reader(['en'], gpu=False)
 
     for uploaded_file in uploaded_files:
-        st.markdown(f"### 🖼️ File: `{uploaded_file.name}`")
+        st.markdown(f"### 📄 File: `{uploaded_file.name}`")
         image = np.array(Image.open(uploaded_file).convert("RGB"))
 
-        preds, input_image = predict_yolo(model, image)
-        indices, boxes, class_ids = process_predictions(preds, input_image)
+        preds, input_img = predict_yolo(model, image)
+        boxes = process_predictions(preds, input_img)
 
-        if len(indices) == 0:
+        if not boxes:
             st.warning("⚠️ No fields detected.")
             continue
 
-        df = extract_fields_split(image, boxes, indices, class_ids, reader)
-        st.success("✅ OCR completed!")
+        df = extract_table_by_alignment(image, boxes, reader)
 
         def highlight_abnormal(row):
-            return ["background-color: #ffdddd" if row.get("Abnormal") else ""] * len(row)
+            return ["background-color: #ffdddd" if row["Abnormal"] else ""] * len(row)
 
         st.dataframe(df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1))
+        st.download_button("📥 Download CSV", df.drop(columns="Abnormal").to_csv(index=False),
+                           file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
 
-        st.download_button("📥 Download CSV",
-                           df.drop(columns="Abnormal").to_csv(index=False),
-                           file_name=f"{uploaded_file.name}_ocr.csv",
-                           mime="text/csv")
-
-        boxed_img = draw_boxes(image.copy(), boxes, indices)
+        boxed_img = draw_boxes(image.copy(), boxes)
         st.image(boxed_img, caption="📦 Detected Fields", use_container_width=True)
