@@ -1,6 +1,7 @@
 streamlit>=1.28
 opencv-python-headless>=4.9.0
-pytesseract>=0.3.10
-numpy>=1.26.0,<2.0.0  # Avoid NumPy 2.x due to compatibility
+numpy>=1.26.0,<2.0.0
 pandas>=1.5
 Pillow>=9.0
+easyocr>=1.7.1
+torch>=1.13.0
