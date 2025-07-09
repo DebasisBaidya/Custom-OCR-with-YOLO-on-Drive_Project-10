@@ -16,10 +16,14 @@ def load_yolo_model():
     if not os.path.exists(model_path):
         st.error(f"Model not found at {model_path}. Please check the path or upload the model.")
         st.stop()
-    model = cv2.dnn.readNetFromONNX(model_path)
-    model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    return model
+    try:
+        model = cv2.dnn.readNet(model_path)  # More flexible than readNetFromONNX
+        model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        return model
+    except cv2.error as e:
+        st.error(f"❌ OpenCV failed to load the ONNX model.\n\nDetails: {e}")
+        st.stop()
 
 # 📌 Task 1.2: Perform YOLO prediction on uploaded image
 @st.cache_resource
