@@ -1,106 +1,157 @@
-# ✅ Streamlit App for Project 10 - Custom OCR (YOLOv5 + EasyOCR)
-# Purpose: Detect and structure medical lab report fields using YOLOv5 and EasyOCR
+# ✅ Streamlit App for Project 10 - Custom OCR (YOLOv5 + Tesseract)
+# Purpose: Detect and structure medical lab report fields using YOLOv5 and Tesseract OCR
 
 import cv2
 import numpy as np
+import pytesseract as py
 import pandas as pd
 import streamlit as st
-import easyocr
 from PIL import Image
 import os
 
-# ✅ Load YOLOv5 model
+# ✅ Load YOLOv5 model (your version)
 def load_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
-        st.error(f"Model not found at {model_path}")
+        st.error(f"❌ Model not found at {model_path}")
         st.stop()
     net = cv2.dnn.readNet(model_path)
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
 
-# ✅ Predict using YOLOv5 model
-def detect_regions(net, image):
-    H, W = image.shape[:2]
-    blob = cv2.dnn.blobFromImage(image, 1/255.0, (640, 640), swapRB=True, crop=False)
-    net.setInput(blob)
-    output = net.forward()[0]
+# ✅ Run YOLOv5 on uploaded image
+def predict_yolo(model, image):
+    INPUT_WH_YOLO = 640
+    row, col, _ = image.shape
+    max_rc = max(row, col)
+    input_image = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
+    input_image[0:row, 0:col] = image
+    blob = cv2.dnn.blobFromImage(input_image, 1/255, (INPUT_WH_YOLO, INPUT_WH_YOLO), swapRB=True, crop=False)
+    model.setInput(blob)
+    preds = model.forward()
+    return preds, input_image
 
-    boxes, scores, class_ids = [], [], []
-    for i in range(output.shape[0]):
-        row = output[i]
-        conf = row[4]
-        if conf >= 0.4:
-            scores_all = row[5:]
-            class_id = np.argmax(scores_all)
-            if scores_all[class_id] > 0.25:
-                cx, cy, w, h = row[0:4]
-                x = int((cx - w / 2) * W / 640)
-                y = int((cy - h / 2) * H / 640)
-                width = int(w * W / 640)
-                height = int(h * H / 640)
-                boxes.append([x, y, width, height])
-                scores.append(float(conf))
-                class_ids.append(class_id)
-    indices = cv2.dnn.NMSBoxes(boxes, scores, 0.25, 0.45)
-    return [boxes[i[0]] for i in indices], [class_ids[i[0]] for i in indices]
+# ✅ Process YOLO predictions
+def process_predictions(predictions, input_image, conf_threshold=0.4, score_threshold=0.25):
+    boxes = []
+    confidences = []
+    detections = predictions[0]
+    H, W = input_image.shape[:2]
+    x_factor = W / 640
+    y_factor = H / 640
 
-# ✅ Map class ids to names
-class_map = {
-    0: "Test Name",
-    1: "Value",
-    2: "Units",
-    3: "Reference Range"
-}
+    for det in detections:
+        confidence = det[4]
+        if confidence > conf_threshold:
+            scores = det[5:]
+            class_id = np.argmax(scores)
+            if scores[class_id] > score_threshold:
+                cx, cy, w, h = det[0:4]
+                left = int((cx - 0.5 * w) * x_factor)
+                top = int((cy - 0.5 * h) * y_factor)
+                boxes.append([left, top, int(w * x_factor), int(h * y_factor)])
+                confidences.append(float(confidence))
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
+    return indices, boxes
 
-# ✅ Run OCR on each region
-def run_ocr(image, boxes, class_ids, reader):
-    data = {"Test Name": [], "Value": [], "Units": [], "Reference Range": []}
-    for (box, cls_id) in zip(boxes, class_ids):
-        x, y, w, h = box
+# ✅ Preprocess cropped image for better OCR
+def preprocess_image(crop_img):
+    gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    roi = cv2.bitwise_not(thresh)
+    return roi
+
+# ✅ Perform OCR and extract structured fields
+def perform_ocr_on_crops(image, boxes, indices, ocr_config='--oem 3 --psm 6'):
+    test_names, values, units, ref_ranges = [], [], [], []
+
+    # Replace these indices with your actual class index mapping
+    box_mapping = {
+        61: "Test Name",
+        14: "Value",
+        26: "Units",
+        41: "Reference Range"
+    }
+
+    for i in indices.flatten():
+        if i >= len(boxes):
+            continue
+
+        x, y, w, h = boxes[i]
+        x, y = max(0, x), max(0, y)
+        x_end, y_end = min(image.shape[1], x+w), min(image.shape[0], y+h)
+        w, h = x_end - x, y_end - y
+
+        if w <= 0 or h <= 0:
+            continue
+
         crop = image[y:y+h, x:x+w]
-        result = reader.readtext(crop, detail=0)
-        text = " ".join(result).strip()
-        label = class_map.get(cls_id, "Unknown")
-        data[label].append(text)
-    return data
+        roi = preprocess_image(crop)
 
-# ✅ Display image with boxes
-def draw_boxes(image, boxes, class_ids):
-    for (box, cls_id) in zip(boxes, class_ids):
-        x, y, w, h = box
-        cv2.rectangle(image, (x,y), (x+w,y+h), (0,255,0), 2)
-        cv2.putText(image, class_map.get(cls_id, ""), (x, y-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
+        text = py.image_to_string(roi, config=ocr_config).strip()
+        lines = text.splitlines()
+
+        label = box_mapping.get(i, None)
+        if label:
+            for line in lines:
+                if label == "Test Name": test_names.append(line.strip())
+                elif label == "Value": values.append(line.strip())
+                elif label == "Units": units.append(line.strip())
+                elif label == "Reference Range": ref_ranges.append(line.strip())
+
+    # Pad lists to equal length
+    max_len = max(len(test_names), len(values), len(units), len(ref_ranges))
+    test_names.extend([""] * (max_len - len(test_names)))
+    values.extend([""] * (max_len - len(values)))
+    units.extend([""] * (max_len - len(units)))
+    ref_ranges.extend([""] * (max_len - len(ref_ranges)))
+
+    return pd.DataFrame({
+        "Test Name": test_names,
+        "Value": values,
+        "Units": units,
+        "Reference Range": ref_ranges
+    })
+
+# ✅ Draw detection boxes
+def draw_boxes(image, boxes, indices):
+    for i in indices.flatten():
+        x, y, w, h = boxes[i]
+        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
 # ✅ Streamlit UI
 st.set_page_config(layout="wide")
-st.title("🩺 Medical Lab Report OCR with YOLOv5 + EasyOCR")
-uploaded_files = st.file_uploader("Upload JPG image(s)", type="jpg", accept_multiple_files=True)
+st.title("🩺 Custom OCR for Medical Reports (YOLOv5 + Tesseract)")
+
+uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type="jpg", accept_multiple_files=True)
 
 if uploaded_files:
     model = load_model()
-    reader = easyocr.Reader(["en"], gpu=False)
 
     for uploaded_file in uploaded_files:
-        st.markdown(f"### Processing: {uploaded_file.name}")
+        st.markdown(f"### 📌 Processing: `{uploaded_file.name}`")
         image = np.array(Image.open(uploaded_file).convert("RGB"))
 
-        boxes, class_ids = detect_regions(model, image)
-        ocr_result = run_ocr(image, boxes, class_ids, reader)
+        preds, input_img = predict_yolo(model, image)
+        indices, boxes = process_predictions(preds, input_img)
 
-        # Pad to max length
-        max_len = max(len(v) for v in ocr_result.values())
-        for k in ocr_result:
-            while len(ocr_result[k]) < max_len:
-                ocr_result[k].append("")
+        if len(indices) == 0:
+            st.warning("⚠️ No text regions detected!")
+            continue
 
-        df = pd.DataFrame(ocr_result)
-        st.dataframe(df)
+        # OCR + Draw
+        df = perform_ocr_on_crops(image, boxes, indices)
+        st.success("✅ OCR Complete!")
 
-        st.download_button("📥 Download CSV", df.to_csv(index=False), f"{uploaded_file.name}_ocr.csv", mime="text/csv")
+        st.dataframe(df.style.set_table_styles([
+            {"selector": "thead th", "props": [("background-color", "#f7f7f7"), ("color", "#333")]}
+        ]).set_properties(**{"text-align": "left"}))
 
-        boxed_img = draw_boxes(image.copy(), boxes, class_ids)
-        st.image(boxed_img, caption="Detected Regions", use_container_width=True)
+        st.download_button("📥 Download CSV", df.to_csv(index=False), file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
+
+        boxed_img = draw_boxes(image.copy(), boxes, indices)
+        st.image(boxed_img, caption="🔍 Detected Regions", use_column_width=True)
