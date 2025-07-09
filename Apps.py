@@ -1,21 +1,13 @@
-# ✅ Streamlit App for Project 10 - Custom OCR
-# Purpose: Detect regions from medical lab reports using YOLOv3 and extract text using Tesseract OCR
+# ✅ Streamlit App for Project 10 - Custom OCR (EasyOCR Version)
+# Purpose: Detect regions from medical lab reports using YOLOv3 and extract text using EasyOCR (no Tesseract needed)
 
 import cv2
-import pytesseract as py
 import numpy as np
 import pandas as pd
 import streamlit as st
 import os
 from PIL import Image
-
-# ✅ Set Tesseract path (Windows only)
-py.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-
-# ✅ Check if Tesseract is installed
-if not os.path.exists(py.pytesseract.tesseract_cmd):
-    st.error("❌ Tesseract not found. Please install Tesseract OCR and update the path in the script.")
-    st.stop()
+import easyocr
 
 # 📌 Task 1.1: Load YOLO model from repo
 def load_yolo_model():
@@ -69,16 +61,8 @@ def process_predictions(predictions, input_image, conf_threshold=0.4, score_thre
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
     return indices, boxes
 
-# 📌 Task 2.2: Preprocess cropped image for OCR
-def preprocess_image(crop):
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    return cv2.bitwise_not(thresh)
-
-# 📌 Task 2.3: OCR on crops
-def perform_ocr_on_crops(image, boxes, indices, ocr_config='--oem 3 --psm 6'):
+# 📌 Task 2.2: OCR with EasyOCR on crops
+def perform_ocr_easyocr(image, boxes, indices, reader):
     results = []
     for i in indices.flatten():
         if i >= len(boxes):
@@ -88,9 +72,9 @@ def perform_ocr_on_crops(image, boxes, indices, ocr_config='--oem 3 --psm 6'):
         x_end = min(image.shape[1], x + w)
         y_end = min(image.shape[0], y + h)
         crop_img = image[y:y_end, x:x_end]
-        roi = preprocess_image(crop_img)
-        text = py.image_to_string(roi, config=ocr_config).strip()
-        results.append(text)
+        result = reader.readtext(crop_img, detail=0)
+        joined = " ".join(result).strip()
+        results.append(joined)
     return pd.DataFrame({'Text': results})
 
 # 📌 Task 3: Draw bounding boxes
@@ -102,19 +86,20 @@ def draw_bounding_boxes(image, boxes, indices):
 
 # ✅ Task 4: Build Streamlit UI
 st.set_page_config(layout="wide")
-st.title("🩺 Custom OCR for Medical Lab Reports")
+st.title("🩺 Custom OCR for Medical Lab Reports (EasyOCR)")
 
 uploaded_files = st.file_uploader("Upload JPG image(s)", type="jpg", accept_multiple_files=True)
 
 if uploaded_files:
     model = load_yolo_model()
+    reader = easyocr.Reader(['en'])  # English OCR reader
     for uploaded_file in uploaded_files:
         st.markdown(f"### Processing: {uploaded_file.name}")
         image = np.array(Image.open(uploaded_file))
 
         preds, input_image = predict_yolo(model, image)
         indices, boxes = process_predictions(preds, input_image)
-        ocr_df = perform_ocr_on_crops(image, boxes, indices)
+        ocr_df = perform_ocr_easyocr(image, boxes, indices, reader)
 
         st.dataframe(ocr_df)
 
