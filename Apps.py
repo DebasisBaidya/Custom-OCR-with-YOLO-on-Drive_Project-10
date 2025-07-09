@@ -6,7 +6,6 @@ from PIL import Image
 import easyocr
 import os
 import re
-from itertools import zip_longest
 
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
@@ -30,8 +29,8 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_image
 
-# ✅ Safe box filtering
-def process_predictions(preds, image, conf_threshold=0.4, score_threshold=0.25):
+# ✅ Process YOLO Predictions
+def process_predictions(preds, image, conf_thresh=0.4, score_thresh=0.25):
     boxes = []
     confidences = []
     detections = preds[0]
@@ -41,10 +40,10 @@ def process_predictions(preds, image, conf_threshold=0.4, score_threshold=0.25):
 
     for det in detections:
         conf = det[4]
-        if conf > conf_threshold:
+        if conf > conf_thresh:
             scores = det[5:]
             class_id = np.argmax(scores)
-            if scores[class_id] > score_threshold:
+            if scores[class_id] > score_thresh:
                 cx, cy, w, h = det[:4]
                 x = int((cx - 0.5 * w) * x_factor)
                 y = int((cy - 0.5 * h) * y_factor)
@@ -59,52 +58,68 @@ def process_predictions(preds, image, conf_threshold=0.4, score_threshold=0.25):
     flat_indices = indices.flatten() if hasattr(indices, 'flatten') else indices
     return [boxes[i] for i in flat_indices]
 
-# ✅ Preprocess image for OCR
+# ✅ Preprocess for OCR
 def preprocess_crop(crop_img):
     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     _, threshed = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return threshed
 
-# ✅ Extract and split each box's text into rows
-def extract_table_by_line_split(image, boxes, reader):
-    grouped = {"Test Name": [], "Value": [], "Units": [], "Reference Range": []}
+# ✅ Smart Row-wise Alignment using Vertical Position
+def extract_fields_by_alignment(image, boxes, reader):
+    fields = []
 
     for box in boxes:
         x, y, w, h = box
         crop = image[y:y+h, x:x+w]
         roi = preprocess_crop(crop)
-        text = reader.readtext(roi, detail=0)
-        text = "\n".join([t.strip() for t in text if t.strip()])
+        text = " ".join(reader.readtext(roi, detail=0)).strip()
+        if text:
+            fields.append({
+                "text": text,
+                "x": x,
+                "y": y,
+                "cy": y + h // 2
+            })
 
-        # Guess field by X position
-        if x < image.shape[1] * 0.3:
-            grouped["Test Name"].append(text)
-        elif x < image.shape[1] * 0.5:
-            grouped["Value"].append(text)
-        elif x < image.shape[1] * 0.7:
-            grouped["Units"].append(text)
-        else:
-            grouped["Reference Range"].append(text)
+    # Group fields by vertical position
+    fields.sort(key=lambda f: f["cy"])
+    row_threshold = 25  # group fields within 25 pixels vertically
+    rows = []
 
-    # Split all fields into individual lines
-    names = "\n".join(grouped["Test Name"]).splitlines()
-    values = "\n".join(grouped["Value"]).splitlines()
-    units = "\n".join(grouped["Units"]).splitlines()
-    ranges = "\n".join(grouped["Reference Range"]).splitlines()
+    for field in fields:
+        placed = False
+        for row in rows:
+            if abs(field["cy"] - row["cy"]) < row_threshold:
+                row["fields"].append(field)
+                row["cy_vals"].append(field["cy"])
+                row["cy"] = int(np.mean(row["cy_vals"]))  # update avg
+                placed = True
+                break
+        if not placed:
+            rows.append({
+                "cy": field["cy"],
+                "cy_vals": [field["cy"]],
+                "fields": [field]
+            })
 
-    final_rows = []
-    for row in zip_longest(names, values, units, ranges, fillvalue=""):
-        final_rows.append({
-            "Test Name": row[0],
-            "Value": row[1],
-            "Units": row[2],
-            "Reference Range": row[3]
+    # Sort fields left to right within each row
+    final_data = []
+    for row in rows:
+        sorted_fields = sorted(row["fields"], key=lambda f: f["x"])
+        texts = [f["text"] for f in sorted_fields]
+        while len(texts) < 4:
+            texts.append("")
+        final_data.append({
+            "Test Name": texts[0],
+            "Value": texts[1],
+            "Units": texts[2],
+            "Reference Range": texts[3]
         })
 
-    df = pd.DataFrame(final_rows)
+    df = pd.DataFrame(final_data)
 
-    # ✅ Optional abnormal check
+    # ✅ Optional abnormal detection
     def is_abnormal(row):
         try:
             val = float(row["Value"].replace(",", "."))
@@ -121,7 +136,7 @@ def extract_table_by_line_split(image, boxes, reader):
 
     return df
 
-# ✅ Draw Boxes
+# ✅ Draw YOLO Boxes
 def draw_boxes(image, boxes):
     for box in boxes:
         x, y, w, h = box
@@ -130,7 +145,7 @@ def draw_boxes(image, boxes):
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("📊 Lab Report OCR (YOLOv5 + EasyOCR — Fixed Line Split Version)")
+st.title("📊 Smart Lab Report OCR (YOLOv5 + EasyOCR + Row Clustering)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -139,7 +154,7 @@ if uploaded_files:
     reader = easyocr.Reader(['en'], gpu=False)
 
     for uploaded_file in uploaded_files:
-        st.markdown(f"### 📄 File: `{uploaded_file.name}`")
+        st.markdown(f"### 🖼️ File: `{uploaded_file.name}`")
         image = np.array(Image.open(uploaded_file).convert("RGB"))
 
         with st.spinner("🔍 Running OCR..."):
@@ -150,7 +165,7 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_table_by_line_split(image, boxes, reader)
+            df = extract_fields_by_alignment(image, boxes, reader)
 
         def highlight_abnormal(row):
             return ["background-color: #ffdddd" if row.get("Abnormal", False) else ""] * len(row)
