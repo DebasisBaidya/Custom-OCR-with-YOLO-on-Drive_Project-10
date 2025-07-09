@@ -53,15 +53,17 @@ def process_predictions(predictions, input_image, conf_threshold=0.4, score_thre
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
     return indices, boxes, class_ids
 
-# ✅ Group detected fields row-wise by y-coordinate
+# ✅ Group OCR results row-by-row based on y-coordinates + class IDs
 def group_boxes_by_row(image, boxes, indices, class_ids, reader):
-    detected = []
+    box_mapping = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
+    items = []
 
     for i in indices.flatten():
         if i >= len(boxes) or i >= len(class_ids):
             continue
         x, y, w, h = boxes[i]
         label_id = class_ids[i]
+
         x, y = max(0, x), max(0, y)
         x_end, y_end = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y:y_end, x:x_end]
@@ -70,46 +72,42 @@ def group_boxes_by_row(image, boxes, indices, class_ids, reader):
         text = " ".join(result).strip()
 
         if text:
-            detected.append({
-                "y": y,
-                "x": x,
+            items.append({
                 "label": label_id,
-                "text": text
+                "label_name": box_mapping.get(label_id),
+                "text": text,
+                "x": x,
+                "y": y
             })
 
-    # ✅ Group detections by y position (row-wise)
-    detected = sorted(detected, key=lambda d: d["y"])  # top to bottom
-    grouped_rows = []
-    row_threshold = 30  # pixels
+    # ✅ Group fields row-wise by proximity in y-axis
+    items = sorted(items, key=lambda d: d["y"])  # top to bottom
+    rows = []
+    row_threshold = 40  # adjust for vertical spacing
 
-    for d in detected:
+    for item in items:
         matched = False
-        for row in grouped_rows:
-            if abs(row["y"] - d["y"]) < row_threshold:
-                row["items"].append(d)
+        for row in rows:
+            if abs(row["y"] - item["y"]) < row_threshold:
+                row["fields"].append(item)
                 matched = True
                 break
         if not matched:
-            grouped_rows.append({"y": d["y"], "items": [d]})
+            rows.append({"y": item["y"], "fields": [item]})
 
-    # ✅ Build structured rows
-    output = []
-    for row in grouped_rows:
-        row_dict = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
-        for item in row["items"]:
-            if item["label"] == 0:
-                row_dict["Test Name"] = item["text"]
-            elif item["label"] == 1:
-                row_dict["Value"] = item["text"]
-            elif item["label"] == 2:
-                row_dict["Units"] = item["text"]
-            elif item["label"] == 3:
-                row_dict["Reference Range"] = item["text"]
-        output.append(row_dict)
+    # ✅ Build each test row using class labels
+    structured = []
+    for row in rows:
+        row_data = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+        for field in row["fields"]:
+            label = field["label_name"]
+            if label in row_data:
+                row_data[label] = field["text"]
+        structured.append(row_data)
 
-    return pd.DataFrame(output)
+    return pd.DataFrame(structured)
 
-# ✅ Draw detection boxes
+# ✅ Draw detection boxes on image
 def draw_boxes(image, boxes, indices):
     for i in indices.flatten():
         x, y, w, h = boxes[i]
@@ -137,7 +135,7 @@ if uploaded_files:
             st.warning("⚠️ No text regions detected!")
             continue
 
-        # Row-wise grouping OCR
+        # Perform OCR + structure per test row
         df = group_boxes_by_row(image, boxes, indices, class_ids, reader)
         st.success("✅ OCR Complete!")
 
