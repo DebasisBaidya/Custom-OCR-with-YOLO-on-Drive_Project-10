@@ -61,27 +61,28 @@ def preprocess_image(crop_img):
     roi = cv2.bitwise_not(thresh)
     return roi
 
-# ✅ Extract Fields and Align Rows by Index (zip)
-def extract_fields_aligned(image, boxes, indices, class_ids, reader):
+# ✅ Extract Fields (Split Mode)
+def extract_fields_split(image, boxes, indices, class_ids, reader):
     field_labels = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
-    grouped = {"Test Name": [], "Value": [], "Units": [], "Reference Range": []}
+    grouped = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
 
     for i in indices.flatten():
         x, y, w, h = boxes[i]
         crop = image[y:y+h, x:x+w]
         roi = preprocess_image(crop)
         text = " ".join(reader.readtext(roi, detail=0)).strip()
-        if text:
-            label = field_labels.get(class_ids[i], None)
-            if label:
-                grouped[label].append((y, text))  # sort by y
+        label = field_labels.get(class_ids[i], None)
+        if label:
+            grouped[label] += " " + text  # append to string
 
-    for key in grouped:
-        grouped[key] = [t[1] for t in sorted(grouped[key], key=lambda x: x[0])]
+    # Split into individual entries
+    names = grouped["Test Name"].split()
+    values = grouped["Value"].split()
+    units = grouped["Units"].split()
+    ranges = grouped["Reference Range"].split()
 
-    # Align all fields by position using zip_longest
     final_rows = []
-    for row in zip_longest(grouped["Test Name"], grouped["Value"], grouped["Units"], grouped["Reference Range"], fillvalue=""):
+    for row in zip_longest(names, values, units, ranges, fillvalue=""):
         final_rows.append({
             "Test Name": row[0],
             "Value": row[1],
@@ -91,7 +92,6 @@ def extract_fields_aligned(image, boxes, indices, class_ids, reader):
 
     df = pd.DataFrame(final_rows)
 
-    # ✅ Highlight Abnormal
     def is_abnormal(row):
         try:
             val = float(row["Value"].replace(",", "."))
@@ -115,7 +115,7 @@ def draw_boxes(image, boxes, indices):
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("🩺 Lab Report OCR (YOLOv5 + EasyOCR + Smart Row Matching)")
+st.title("🩺 Lab Report OCR (YOLOv5 + EasyOCR + Line Split Hack)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -134,7 +134,7 @@ if uploaded_files:
             st.warning("⚠️ No fields detected.")
             continue
 
-        df = extract_fields_aligned(image, boxes, indices, class_ids, reader)
+        df = extract_fields_split(image, boxes, indices, class_ids, reader)
         st.success("✅ OCR completed!")
 
         def highlight_abnormal(row):
