@@ -6,7 +6,7 @@ from PIL import Image
 import os
 import easyocr
 
-# ✅ Class mapping from YOLO class IDs
+# ✅ YOLOv5 Class Mapping
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -25,7 +25,7 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# ✅ Run YOLOv5 prediction
+# ✅ Run YOLOv5 forward pass
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -36,15 +36,15 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# ✅ Process YOLO detections
+# ✅ Process YOLO output
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes = []
     confidences = []
     class_ids = []
-    detections = preds[0]
     h, w = input_img.shape[:2]
     x_factor = w / 640
     y_factor = h / 640
+    detections = preds[0]
 
     for det in detections:
         conf = det[4]
@@ -62,9 +62,16 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ OCR and store each field separately
-def extract_fields_exploded(image, boxes, indices, class_ids, reader):
-    results = {
+# ✅ Extract + smart merge Test Names
+def extract_fields_precise(image, boxes, indices, class_ids, reader):
+    fields = {
+        "Test Name": [],
+        "Value": [],
+        "Units": [],
+        "Reference Range": []
+    }
+
+    y_coords = {
         "Test Name": [],
         "Value": [],
         "Units": [],
@@ -88,43 +95,47 @@ def extract_fields_exploded(image, boxes, indices, class_ids, reader):
         roi = cv2.bitwise_not(binary)
 
         try:
-            ocr_lines = reader.readtext(roi, detail=0)
+            text = " ".join(reader.readtext(roi, detail=0)).strip()
         except:
-            ocr_lines = []
+            text = ""
 
-        for line in ocr_lines:
-            clean = line.strip()
-            if clean:
-                results[label].append(clean)
+        if text:
+            fields[label].append(text)
+            y_coords[label].append(y + h // 2)
 
-    # Create exploded DataFrame
-    df = pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
-    return df
+    # ✅ Smart merge Test Names based on Y proximity
+    tn = pd.DataFrame({"text": fields["Test Name"], "y": y_coords["Test Name"]})
+    tn = tn.sort_values("y").reset_index(drop=True)
 
-# ✅ Merge Test Name fragments like 'Total' + 'Bilirubin'
-def fix_fragmented_test_names(df):
-    rows = df.to_dict("records")
-    fixed_rows = []
-    buffer = None
-
-    for i, row in enumerate(rows):
-        tn = row.get("Test Name", "").strip()
-        other_fields = [row.get("Value", ""), row.get("Units", ""), row.get("Reference Range", "")]
-        if tn and all(v == "" or v is None for v in other_fields):
-            if buffer:
-                buffer["Test Name"] += " " + tn
-            else:
-                buffer = {"Test Name": tn, "Value": "", "Units": "", "Reference Range": ""}
+    merged_names = []
+    temp = ""
+    y_thresh = 20  # adjust as needed
+    for i in range(len(tn)):
+        if i == 0:
+            temp = tn.loc[i, "text"]
         else:
-            if buffer:
-                fixed_rows.append(buffer)
-                buffer = None
-            fixed_rows.append(row)
+            diff = tn.loc[i, "y"] - tn.loc[i - 1, "y"]
+            if diff < y_thresh:
+                temp += " " + tn.loc[i, "text"]
+            else:
+                merged_names.append(temp)
+                temp = tn.loc[i, "text"]
+    if temp:
+        merged_names.append(temp)
 
-    if buffer:
-        fixed_rows.append(buffer)
+    # ✅ Pad other fields to match Test Name length
+    max_len = len(merged_names)
+    def pad(lst):
+        return lst + [""] * (max_len - len(lst))
 
-    return pd.DataFrame(fixed_rows)
+    result_df = pd.DataFrame({
+        "Test Name": merged_names,
+        "Value": pad(fields["Value"]),
+        "Units": pad(fields["Units"]),
+        "Reference Range": pad(fields["Reference Range"])
+    })
+
+    return result_df
 
 # ✅ Draw boxes
 def draw_boxes(image, boxes, indices):
@@ -133,11 +144,11 @@ def draw_boxes(image, boxes, indices):
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI
+# ✅ Streamlit app
 st.set_page_config(layout="wide")
-st.title("🧪 Medical Lab Report OCR (Exploded Fields + Merge Fix)")
+st.title("🧪 Final Medical OCR App (Smart Merge)")
 
-uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type=["jpg"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("📤 Upload JPG Image(s)", type=["jpg"], accept_multiple_files=True)
 
 if uploaded_files:
     model = load_yolo_model()
@@ -147,7 +158,7 @@ if uploaded_files:
         st.markdown(f"### 📄 File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        with st.spinner("🔍 Detecting & Extracting..."):
+        with st.spinner("🔍 Extracting data..."):
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
@@ -155,8 +166,7 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_fields_exploded(image, boxes, indices, class_ids, reader)
-            df = fix_fragmented_test_names(df)
+            df = extract_fields_precise(image, boxes, indices, class_ids, reader)
 
         st.success("✅ Extraction Complete!")
         st.dataframe(df)
@@ -166,5 +176,5 @@ if uploaded_files:
                            file_name=f"{file.name}_ocr.csv",
                            mime="text/csv")
 
-        boxed = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed, caption="📦 Detected Fields", use_container_width=True)
+        boxed_img = draw_boxes(image.copy(), boxes, indices)
+        st.image(boxed_img, caption="📦 Detected Fields", use_container_width=True)
