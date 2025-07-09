@@ -61,7 +61,7 @@ def preprocess_image(crop_img):
     roi = cv2.bitwise_not(thresh)
     return roi
 
-# ✅ Extract Fields (with multiline name logic)
+# ✅ Extract Fields (with regex fix for test names)
 def extract_fields_split(image, boxes, indices, class_ids, reader):
     field_labels = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
     grouped = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
@@ -73,13 +73,14 @@ def extract_fields_split(image, boxes, indices, class_ids, reader):
         text = "\n".join(reader.readtext(roi, detail=0)).strip()
         label = field_labels.get(class_ids[i], None)
         if label:
-            grouped[label] += "\n" + text  # keep lines
+            grouped[label] += "\n" + text  # accumulate lines
 
-    # 🧠 Fix for multiline test names: Group every 3 lines into one test name
-    name_lines = grouped["Test Name"].strip().splitlines()
-    names = [" ".join(name_lines[i:i+3]) for i in range(0, len(name_lines), 3)]
+    # ✅ Smart regex-based split for Test Names
+    raw_test_name = grouped["Test Name"].strip().replace('\n', ' ')
+    names = re.findall(r'[^()]+\\(.*?\\)', raw_test_name)  # optional
+    if not names:
+        names = [t.strip() for t in re.split(r'(?<=\))', raw_test_name) if t.strip()]
 
-    # 🧠 Split other columns by space
     values = grouped["Value"].strip().split()
     units = grouped["Units"].strip().split()
     ranges = grouped["Reference Range"].strip().split()
@@ -118,7 +119,7 @@ def draw_boxes(image, boxes, indices):
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("🩺 Lab Report OCR (YOLOv5 + EasyOCR + Multiline Fix)")
+st.title("🧠 Lab Report OCR (YOLOv5 + EasyOCR + Regex Split Fix)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
