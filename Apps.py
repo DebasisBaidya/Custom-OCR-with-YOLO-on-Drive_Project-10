@@ -6,7 +6,7 @@ from PIL import Image
 import os
 import easyocr
 
-# ✅ Class ID to Label mapping
+# ✅ YOLO class index mapping
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -25,7 +25,7 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# ✅ YOLO detection
+# ✅ Run YOLOv5 prediction
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -36,7 +36,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# ✅ Process predictions
+# ✅ Process YOLO detections
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes = []
     confidences = []
@@ -62,8 +62,8 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ OCR extraction using EasyOCR with merged lines
-def extract_fields_fixed(image, boxes, indices, class_ids, reader):
+# ✅ EasyOCR-based extraction (each OCR line = row)
+def extract_fields_exploded(image, boxes, indices, class_ids, reader):
     results = {
         "Test Name": [],
         "Value": [],
@@ -82,7 +82,7 @@ def extract_fields_fixed(image, boxes, indices, class_ids, reader):
 
         crop = image[y:y+h, x:x+w]
 
-        # Preprocessing for OCR
+        # Preprocess
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -94,27 +94,26 @@ def extract_fields_fixed(image, boxes, indices, class_ids, reader):
         except:
             ocr_lines = []
 
-        # ✅ Join all OCR lines into one clean string
-        text = " ".join(line.strip() for line in ocr_lines if line.strip())
-        text = " ".join(text.split())  # remove double spaces etc.
+        # Each line is a separate field entry
+        for line in ocr_lines:
+            clean = line.strip()
+            if clean:
+                results[label].append(clean)
 
-        if text:
-            results[label].append(text)
-
-    # Convert to exploded DataFrame
+    # Explode each field to row format
     df = pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
     return df
 
-# ✅ Draw YOLO bounding boxes
+# ✅ Draw bounding boxes
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI
+# ✅ Streamlit app UI
 st.set_page_config(layout="wide")
-st.title("🧾 Medical Lab Report OCR (YOLOv5 + EasyOCR + Clean Merge Fix)")
+st.title("🧾 Medical Lab Report OCR (Stable, Exploded Rows)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG report(s)", type=["jpg"], accept_multiple_files=True)
 
@@ -126,7 +125,7 @@ if uploaded_files:
         st.markdown(f"### 📄 File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        with st.spinner("🔍 Running Detection + OCR..."):
+        with st.spinner("🔍 Running YOLO + OCR..."):
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
@@ -134,9 +133,9 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_fields_fixed(image, boxes, indices, class_ids, reader)
+            df = extract_fields_exploded(image, boxes, indices, class_ids, reader)
 
-        st.success("✅ Extraction Complete!")
+        st.success("✅ Done! Showing exploded results")
         st.dataframe(df)
 
         st.download_button("📥 Download CSV",
@@ -144,5 +143,5 @@ if uploaded_files:
                            file_name=f"{file.name}_ocr.csv",
                            mime="text/csv")
 
-        boxed_image = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_image, caption="📦 Detected Fields", use_container_width=True)
+        boxed = draw_boxes(image.copy(), boxes, indices)
+        st.image(boxed, caption="📦 Detected Boxes", use_container_width=True)
