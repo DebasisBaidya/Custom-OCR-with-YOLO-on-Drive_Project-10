@@ -1,0 +1,4 @@
+train: data_images/train
+val: data_images/test
+nc: 4
+names: ["Test Name", "Value", "Units", "Reference Range"]
