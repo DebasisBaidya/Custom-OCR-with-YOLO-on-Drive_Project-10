@@ -30,7 +30,7 @@ def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
     input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
-    input_img[:h, :w] = image
+    input_img[0:h, 0:w] = image
     blob = cv2.dnn.blobFromImage(input_img, 1/255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
@@ -38,7 +38,9 @@ def predict_yolo(model, image):
 
 # ✅ Process YOLO predictions
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
-    boxes, confidences, class_ids = [], [], []
+    boxes = []
+    confidences = []
+    class_ids = []
     detections = preds[0]
     h, w = input_img.shape[:2]
     x_factor = w / 640
@@ -60,10 +62,14 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ Final fix: build rows based on OCR label logic
-def extract_fields_grouped(image, boxes, indices, class_ids, reader):
-    rows = []
-    last_row = None
+# ✅ Extract OCR lines per box and explode them row-wise
+def extract_fields_exploded(image, boxes, indices, class_ids, reader):
+    results = {
+        "Test Name": [],
+        "Value": [],
+        "Units": [],
+        "Reference Range": []
+    }
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
@@ -82,27 +88,40 @@ def extract_fields_grouped(image, boxes, indices, class_ids, reader):
         roi = cv2.bitwise_not(binary)
 
         try:
-            text = " ".join(reader.readtext(roi, detail=0)).strip()
+            ocr_lines = reader.readtext(roi, detail=0)
         except:
-            text = ""
+            ocr_lines = []
 
-        if not text:
-            continue
+        for line in ocr_lines:
+            clean = line.strip()
+            if clean:
+                results[label].append(clean)
 
-        # 🔄 Build row logic
-        if label == "Test Name":
-            if last_row and not (last_row["Value"] or last_row["Units"] or last_row["Reference Range"]):
-                last_row["Test Name"] += " " + text
+    df = pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
+    return df
+
+# ✅ Merge fragmented test names (e.g. "Total" + "Bilirubin")
+def merge_fragmented_test_names(df):
+    rows = df.to_dict("records")
+    merged_rows = []
+    buffer = None
+
+    for row in rows:
+        if row.get("Test Name") and not any([row.get("Value"), row.get("Units"), row.get("Reference Range")]):
+            if buffer:
+                buffer["Test Name"] += " " + row["Test Name"]
             else:
-                last_row = {"Test Name": text, "Value": "", "Units": "", "Reference Range": ""}
-                rows.append(last_row)
+                buffer = row
         else:
-            if not last_row or (last_row["Value"] or last_row["Units"] or last_row["Reference Range"]):
-                last_row = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
-                rows.append(last_row)
-            last_row[label] = text
+            if buffer:
+                merged_rows.append(buffer)
+                buffer = None
+            merged_rows.append(row)
 
-    return pd.DataFrame(rows)
+    if buffer:
+        merged_rows.append(buffer)
+
+    return pd.DataFrame(merged_rows)
 
 # ✅ Draw YOLO bounding boxes
 def draw_boxes(image, boxes, indices):
@@ -111,9 +130,9 @@ def draw_boxes(image, boxes, indices):
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit App
+# ✅ Streamlit UI
 st.set_page_config(layout="wide")
-st.title("🧾 Medical Lab Report OCR (YOLOv5 + EasyOCR + Final Row Fix ✅)")
+st.title("🧾 Medical Lab Report OCR (YOLOv5 + EasyOCR + Smart Merge)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG report(s)", type=["jpg"], accept_multiple_files=True)
 
@@ -125,7 +144,7 @@ if uploaded_files:
         st.markdown(f"### 📄 File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        with st.spinner("🔍 Running detection..."):
+        with st.spinner("🔍 Running YOLO + OCR..."):
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
@@ -133,7 +152,8 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_fields_grouped(image, boxes, indices, class_ids, reader)
+            df = extract_fields_exploded(image, boxes, indices, class_ids, reader)
+            df = merge_fragmented_test_names(df)
 
         st.success("✅ Extraction Complete!")
         st.dataframe(df)
@@ -144,4 +164,4 @@ if uploaded_files:
                            mime="text/csv")
 
         boxed_image = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_image, caption="📦 YOLO Detected Fields", use_container_width=True)
+        st.image(boxed_image, caption="📦 Detected Fields", use_container_width=True)
