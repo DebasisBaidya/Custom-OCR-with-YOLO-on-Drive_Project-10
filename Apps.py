@@ -10,14 +10,14 @@ import os
 def load_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
-        st.error(f"❌ Model not found at {model_path}")
+        st.error(f"Model not found at {model_path}")
         st.stop()
-    net = cv2.dnn.readNet(model_path)
+    net = cv2.dnn.readNetFromONNX(model_path)
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
 
-# ✅ Run YOLOv5
+# ✅ Predict using YOLO
 def predict_yolo(model, image):
     INPUT_WH_YOLO = 640
     row, col, _ = image.shape
@@ -29,59 +29,71 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_image
 
-# ✅ Extract boxes, scores, class_ids
-def process_predictions(preds, input_image, conf_threshold=0.4, score_threshold=0.25):
-    boxes, scores, class_ids = [], [], []
-    detections = preds[0]
-    h, w = input_image.shape[:2]
-    x_factor, y_factor = w / 640, h / 640
+# ✅ Process YOLO outputs
+def process_predictions(predictions, input_image, conf_threshold=0.4, score_threshold=0.25):
+    boxes, confidences = [], []
+    detections = predictions[0]
+    H, W = input_image.shape[:2]
+    x_factor = W / 640
+    y_factor = H / 640
 
-    for det in detections:
+    for i, det in enumerate(detections):
         confidence = det[4]
         if confidence > conf_threshold:
-            class_scores = det[5:]
-            class_id = np.argmax(class_scores)
-            if class_scores[class_id] > score_threshold:
-                cx, cy, bw, bh = det[:4]
-                x = int((cx - 0.5 * bw) * x_factor)
-                y = int((cy - 0.5 * bh) * y_factor)
-                boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
-                scores.append(float(confidence))
-                class_ids.append(class_id)
+            scores = det[5:]
+            class_id = np.argmax(scores)
+            if scores[class_id] > score_threshold:
+                cx, cy, w, h = det[0:4]
+                left = int((cx - 0.5 * w) * x_factor)
+                top = int((cy - 0.5 * h) * y_factor)
+                boxes.append([left, top, int(w * x_factor), int(h * y_factor)])
+                confidences.append(float(confidence))
 
-    indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold, 0.45)
-    return indices, boxes, class_ids
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
+    return indices, boxes
 
-# ✅ Perform OCR and assign per class
-def perform_ocr(image, boxes, indices, class_ids, reader):
-    field_texts = {0: [], 1: [], 2: [], 3: []}  # 0-Test Name, 1-Value, 2-Unit, 3-Ref
+# ✅ Run EasyOCR and map using box index
+def perform_ocr_easyocr(image, boxes, indices, reader):
+    data = {
+        "Test Name": [],
+        "Value": [],
+        "Units": [],
+        "Reference Range": []
+    }
+
+    # Index-based box mapping like app (12).py
+    box_mapping = {
+        36: "Test Name",
+        27: "Value",
+        29: "Units",
+        34: "Reference Range"
+    }
 
     for i in indices.flatten():
+        if i >= len(boxes):
+            continue
         x, y, w, h = boxes[i]
-        cls_id = class_ids[i]
         x, y = max(0, x), max(0, y)
-        crop = image[y:y+h, x:x+w]
+        x_end = min(x + w, image.shape[1])
+        y_end = min(y + h, image.shape[0])
+        crop = image[y:y_end, x:x_end]
+
         result = reader.readtext(crop, detail=0)
         text = " ".join(result).strip()
-        field_texts[cls_id].append((y, text))  # store with y for sorting
 
-    # Sort all by y-position to keep top-to-bottom order
-    for k in field_texts:
-        field_texts[k] = [txt for y, txt in sorted(field_texts[k], key=lambda x: x[0])]
+        if i in box_mapping:
+            field = box_mapping[i]
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            data[field].extend(lines)
 
-    # Pad all fields to same length
-    max_len = max(len(v) for v in field_texts.values())
-    for k in field_texts:
-        field_texts[k] += [""] * (max_len - len(field_texts[k]))
+    # Pad fields to equal length
+    max_len = max(len(v) for v in data.values())
+    for k in data:
+        data[k].extend([""] * (max_len - len(data[k])))
 
-    return pd.DataFrame({
-        "Test Name": field_texts[0],
-        "Value": field_texts[1],
-        "Units": field_texts[2],
-        "Reference Range": field_texts[3]
-    })
+    return pd.DataFrame(data)
 
-# ✅ Draw boxes
+# ✅ Draw detected boxes
 def draw_boxes(image, boxes, indices):
     for i in indices.flatten():
         x, y, w, h = boxes[i]
@@ -90,7 +102,7 @@ def draw_boxes(image, boxes, indices):
 
 # ✅ Streamlit UI
 st.set_page_config(layout="wide")
-st.title("🩺 Custom OCR for Medical Reports (YOLOv5 + EasyOCR)")
+st.title("🩺 Custom OCR for Lab Reports (YOLOv5 + EasyOCR + Index Mapping)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -103,18 +115,16 @@ if uploaded_files:
         image = np.array(Image.open(uploaded_file).convert("RGB"))
 
         preds, input_img = predict_yolo(model, image)
-        indices, boxes, class_ids = process_predictions(preds, input_img)
+        indices, boxes = process_predictions(preds, input_img)
 
         if len(indices) == 0:
-            st.warning("⚠️ No text regions detected!")
+            st.warning("⚠️ No regions detected.")
             continue
 
-        df = perform_ocr(image, boxes, indices, class_ids, reader)
+        df = perform_ocr_easyocr(image, boxes, indices, reader)
         st.success("✅ OCR Complete!")
 
-        st.dataframe(df.style.set_table_styles([
-            {"selector": "thead th", "props": [("background-color", "#f7f7f7"), ("color", "#333")]}
-        ]).set_properties(**{"text-align": "left"}))
+        st.dataframe(df)
 
         st.download_button("📥 Download CSV", df.to_csv(index=False), file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
 
