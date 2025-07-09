@@ -17,7 +17,7 @@ def load_model():
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
 
-# ✅ Run YOLOv5 on uploaded image
+# ✅ Run YOLOv5
 def predict_yolo(model, image):
     INPUT_WH_YOLO = 640
     row, col, _ = image.shape
@@ -29,89 +29,63 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_image
 
-# ✅ Process YOLO predictions
-def process_predictions(predictions, input_image, conf_threshold=0.4, score_threshold=0.25):
-    boxes, confidences, class_ids = [], [], []
-    detections = predictions[0]
-    H, W = input_image.shape[:2]
-    x_factor = W / 640
-    y_factor = H / 640
+# ✅ Extract boxes, scores, class_ids
+def process_predictions(preds, input_image, conf_threshold=0.4, score_threshold=0.25):
+    boxes, scores, class_ids = [], [], []
+    detections = preds[0]
+    h, w = input_image.shape[:2]
+    x_factor, y_factor = w / 640, h / 640
 
     for det in detections:
         confidence = det[4]
         if confidence > conf_threshold:
-            scores = det[5:]
-            class_id = np.argmax(scores)
-            if scores[class_id] > score_threshold:
-                cx, cy, w, h = det[0:4]
-                left = int((cx - 0.5 * w) * x_factor)
-                top = int((cy - 0.5 * h) * y_factor)
-                boxes.append([left, top, int(w * x_factor), int(h * y_factor)])
-                confidences.append(float(confidence))
+            class_scores = det[5:]
+            class_id = np.argmax(class_scores)
+            if class_scores[class_id] > score_threshold:
+                cx, cy, bw, bh = det[:4]
+                x = int((cx - 0.5 * bw) * x_factor)
+                y = int((cy - 0.5 * bh) * y_factor)
+                boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
+                scores.append(float(confidence))
                 class_ids.append(class_id)
 
-    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
+    indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold, 0.45)
     return indices, boxes, class_ids
 
-# ✅ Group OCR results row-by-row based on y-coordinates + class IDs
-def group_boxes_by_row(image, boxes, indices, class_ids, reader):
-    box_mapping = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
-    items = []
+# ✅ Perform OCR and assign per class
+def perform_ocr(image, boxes, indices, class_ids, reader):
+    field_texts = {0: [], 1: [], 2: [], 3: []}  # 0-Test Name, 1-Value, 2-Unit, 3-Ref
 
     for i in indices.flatten():
-        if i >= len(boxes) or i >= len(class_ids):
-            continue
         x, y, w, h = boxes[i]
-        label_id = class_ids[i]
-
+        cls_id = class_ids[i]
         x, y = max(0, x), max(0, y)
-        x_end, y_end = min(image.shape[1], x + w), min(image.shape[0], y + h)
-        crop = image[y:y_end, x:x_end]
-
+        crop = image[y:y+h, x:x+w]
         result = reader.readtext(crop, detail=0)
         text = " ".join(result).strip()
+        field_texts[cls_id].append((y, text))  # store with y for sorting
 
-        if text:
-            items.append({
-                "label": label_id,
-                "label_name": box_mapping.get(label_id),
-                "text": text,
-                "x": x,
-                "y": y
-            })
+    # Sort all by y-position to keep top-to-bottom order
+    for k in field_texts:
+        field_texts[k] = [txt for y, txt in sorted(field_texts[k], key=lambda x: x[0])]
 
-    # ✅ Group fields row-wise by proximity in y-axis
-    items = sorted(items, key=lambda d: d["y"])  # top to bottom
-    rows = []
-    row_threshold = 40  # adjust for vertical spacing
+    # Pad all fields to same length
+    max_len = max(len(v) for v in field_texts.values())
+    for k in field_texts:
+        field_texts[k] += [""] * (max_len - len(field_texts[k]))
 
-    for item in items:
-        matched = False
-        for row in rows:
-            if abs(row["y"] - item["y"]) < row_threshold:
-                row["fields"].append(item)
-                matched = True
-                break
-        if not matched:
-            rows.append({"y": item["y"], "fields": [item]})
+    return pd.DataFrame({
+        "Test Name": field_texts[0],
+        "Value": field_texts[1],
+        "Units": field_texts[2],
+        "Reference Range": field_texts[3]
+    })
 
-    # ✅ Build each test row using class labels
-    structured = []
-    for row in rows:
-        row_data = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
-        for field in row["fields"]:
-            label = field["label_name"]
-            if label in row_data:
-                row_data[label] = field["text"]
-        structured.append(row_data)
-
-    return pd.DataFrame(structured)
-
-# ✅ Draw detection boxes on image
+# ✅ Draw boxes
 def draw_boxes(image, boxes, indices):
     for i in indices.flatten():
         x, y, w, h = boxes[i]
-        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
     return image
 
 # ✅ Streamlit UI
@@ -135,8 +109,7 @@ if uploaded_files:
             st.warning("⚠️ No text regions detected!")
             continue
 
-        # Perform OCR + structure per test row
-        df = group_boxes_by_row(image, boxes, indices, class_ids, reader)
+        df = perform_ocr(image, boxes, indices, class_ids, reader)
         st.success("✅ OCR Complete!")
 
         st.dataframe(df.style.set_table_styles([
@@ -145,5 +118,5 @@ if uploaded_files:
 
         st.download_button("📥 Download CSV", df.to_csv(index=False), file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
 
-        boxed_img = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_img, caption="🔍 Detected Regions", use_container_width=True)
+        boxed = draw_boxes(image.copy(), boxes, indices)
+        st.image(boxed, caption="🔍 Detected Regions", use_container_width=True)
