@@ -131,8 +131,9 @@ def extract_table_by_alignment(image, boxes, reader):
             return False
         return False
 
-    if not df.empty:
+    if not df.empty and all(col in df.columns for col in ["Value", "Reference Range"]):
         df["Abnormal"] = df.apply(is_abnormal, axis=1)
+
     return df
 
 # ✅ Draw Boxes
@@ -167,14 +168,13 @@ if uploaded_files:
             df = extract_table_by_alignment(image, boxes, reader)
 
         def highlight_abnormal(row):
-            if "Abnormal" not in row:
-                return [""] * len(row)
-            return ["background-color: #ffdddd" if row["Abnormal"] else ""] * len(row)
+            return ["background-color: #ffdddd" if row.get("Abnormal", False) else ""] * len(row)
 
         st.success("✅ Extraction Complete!")
 
         if "Abnormal" in df.columns:
-            st.dataframe(df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1))
+            styled_df = df.style.apply(highlight_abnormal, axis=1)
+            st.dataframe(styled_df.hide_columns(["Abnormal"]))
         else:
             st.dataframe(df)
 
