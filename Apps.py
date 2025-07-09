@@ -1,112 +1,12 @@
-# ✅ Advanced OCR App: YOLOv5 + EasyOCR + Smart Row Mapping + PDF/Image Support
-
-import cv2
-import numpy as np
-import pandas as pd
-import streamlit as st
-from PIL import Image
-import easyocr
-import os
-from pdf2image import convert_from_bytes
-import re
-
-# ✅ Load YOLOv5 ONNX Model using cv2.dnn.readNet()
-def load_model():
-    model_path = "best.onnx"
-    if not os.path.exists(model_path):
-        st.error(f"Model not found at {model_path}")
-        st.stop()
-    net = cv2.dnn.readNet(model_path)
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    return net
-
-# ✅ Run YOLOv5
-
-def predict_yolo(model, image):
-    INPUT_WH_YOLO = 640
-    row, col, _ = image.shape
-    max_rc = max(row, col)
-    input_image = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
-    input_image[0:row, 0:col] = image
-    blob = cv2.dnn.blobFromImage(input_image, 1/255, (INPUT_WH_YOLO, INPUT_WH_YOLO), swapRB=True, crop=False)
-    model.setInput(blob)
-    preds = model.forward()
-    return preds, input_image
-
-# ✅ Process Predictions
-def process_predictions(preds, input_image, conf_thresh=0.4, score_thresh=0.25):
-    boxes, confidences, class_ids = [], [], []
-    detections = preds[0]
-    H, W = input_image.shape[:2]
-    x_factor = W / 640
-    y_factor = H / 640
-    for det in detections:
-        confidence = det[4]
-        if confidence > conf_thresh:
-            scores = det[5:]
-            class_id = np.argmax(scores)
-            if scores[class_id] > score_thresh:
-                cx, cy, w, h = det[:4]
-                left = int((cx - 0.5 * w) * x_factor)
-                top = int((cy - 0.5 * h) * y_factor)
-                boxes.append([left, top, int(w * x_factor), int(h * y_factor)])
-                confidences.append(float(confidence))
-                class_ids.append(class_id)
-    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
-    return indices, boxes, class_ids
-
-# ✅ Preprocess Crop for OCR
-def preprocess_crop(crop):
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    return cv2.bitwise_not(thresh)
-
-# ✅ OCR Extraction + Smart Row Mapping
-def extract_fields_smart(image, boxes, indices, class_ids, reader):
-    field_labels = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
-    detections = []
-
-    for i in indices.flatten():
-        x, y, w, h = boxes[i]
-        crop = image[y:y+h, x:x+w]
-        roi = preprocess_crop(crop)
-        text = " ".join(reader.readtext(roi, detail=0)).strip()
-        if text:
-            detections.append({
-                "label": field_labels.get(class_ids[i], f"Class {class_ids[i]}"),
-                "text": text,
-                "x": x,
-                "y": y,
-                "cx": x + w//2,
-                "cy": y + h//2
-            })
-
-    # ✅ Group into rows using vertical clustering
-    detections.sort(key=lambda d: d["cy"])
-    rows = []
-    row_thresh = 35
-
-    for det in detections:
-        placed = False
-        for row in rows:
-            if abs(row["cy"] - det["cy"]) <= row_thresh:
-                row["fields"].append(det)
-                row["cy_vals"].append(det["cy"])
-                row["cy"] = int(np.mean(row["cy_vals"]))
-                placed = True
-                break
-        if not placed:
-            rows.append({"cy": det["cy"], "fields": [det], "cy_vals": [det["cy"]]})
-
-    final_rows = []
-    for row in rows:
-        row_data = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
-        for f in row["fields"]:
-            row_data[f["label"]] = f["text"]
-        final_rows.append(row_data)
+for row in rows:
+    grouped = {"Test Name": [], "Value": [], "Units": [], "Reference Range": []}
+    for f in row["fields"]:
+        if f["label"] in grouped:
+            grouped[f["label"]].append(f["text"])
+    max_len = max(len(grouped[k]) for k in grouped)
+    from itertools import zip_longest
+    for row_items in zip_longest(grouped["Test Name"], grouped["Value"], grouped["Units"], grouped["Reference Range"], fillvalue=""):
+        final_rows.append({"Test Name": row_items[0], "Value": row_items[1], "Units": row_items[2], "Reference Range": row_items[3]})
 
     df = pd.DataFrame(final_rows)
 
