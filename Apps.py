@@ -9,16 +9,16 @@ import re
 
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
-    model_path = 'best.onnx'
+    model_path = "best.onnx"
     if not os.path.exists(model_path):
         st.error(f"Model not found at {model_path}")
         st.stop()
-    net = cv2.dnn.readNet(model_path)
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    return net
+    model = cv2.dnn.readNetFromONNX(model_path)
+    model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    return model
 
-# ✅ Run YOLO prediction
+# ✅ Predict using YOLOv5
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_dim = max(h, w)
@@ -29,7 +29,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# ✅ Process predictions and return class_ids
+# ✅ Process YOLO predictions
 def process_predictions(preds, input_image, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -46,59 +46,73 @@ def process_predictions(preds, input_image, conf_thresh=0.4, score_thresh=0.25):
                 cx, cy, bw, bh = det[:4]
                 x = int((cx - bw / 2) * x_factor)
                 y = int((cy - bh / 2) * y_factor)
-                w_box = int(bw * x_factor)
-                h_box = int(bh * y_factor)
-                boxes.append([x, y, w_box, h_box])
+                boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
                 confidences.append(float(conf))
                 class_ids.append(class_id)
 
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
-    return indices, boxes, class_ids
+    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ Preprocess crop
+# ✅ Preprocess crop for OCR
 def preprocess_crop(crop):
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, threshed = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return threshed
+    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return thresh
 
-# ✅ Perform OCR and store by class label (explode-based)
-def extract_by_class_explode(image, boxes, indices, class_ids, reader):
-    output = {
-        "Test Name": [],
-        "Value": [],
-        "Units": [],
-        "Reference Range": []
-    }
-
+# ✅ Extract fields and group them row-wise
+def extract_fields_by_row(image, boxes, indices, class_ids, reader):
     class_map = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
+    fields = []
 
-    for idx in indices.flatten():
-        if idx >= len(boxes):
-            continue
-
-        x, y, w, h = boxes[idx]
-        x, y = max(0, x), max(0, y)
-        x2, y2 = min(x + w, image.shape[1]), min(y + h, image.shape[0])
-        crop = image[y:y2, x:x2]
+    for i in indices:
+        x, y, w, h = boxes[i]
+        crop = image[y:y+h, x:x+w]
         roi = preprocess_crop(crop)
+        text = " ".join(reader.readtext(roi, detail=0)).strip()
+        cy = y + h // 2
+        if text:
+            fields.append({
+                "label": class_map.get(class_ids[i], f"Class {class_ids[i]}"),
+                "text": text,
+                "x": x,
+                "cy": cy
+            })
 
-        text_lines = reader.readtext(roi, detail=0)
-        clean_text = [line.strip() for line in text_lines if line.strip()]
-        class_id = class_ids[idx]
-        label = class_map.get(class_id)
+    # ✅ Group into rows by Y-position (cy)
+    fields.sort(key=lambda f: f["cy"])
+    rows = []
+    row_threshold = 30  # pixel gap allowed vertically
 
-        if label and clean_text:
-            output[label].extend(clean_text)
+    for field in fields:
+        placed = False
+        for row in rows:
+            if abs(row["cy"] - field["cy"]) <= row_threshold:
+                row["fields"].append(field)
+                row["cy_vals"].append(field["cy"])
+                row["cy"] = int(np.mean(row["cy_vals"]))
+                placed = True
+                break
+        if not placed:
+            rows.append({"cy": field["cy"], "cy_vals": [field["cy"]], "fields": [field]})
 
-    # Convert to exploded rows
-    df = pd.DataFrame(dict([(k, pd.Series(v)) for k, v in output.items()]))
+    # ✅ Convert grouped rows to structured DataFrame
+    final_data = []
+    for row in rows:
+        this_row = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+        for f in sorted(row["fields"], key=lambda x: x["x"]):
+            label = f["label"]
+            if label in this_row and this_row[label] == "":
+                this_row[label] = f["text"]
+        final_data.append(this_row)
 
-    # Optional: detect abnormal values
+    df = pd.DataFrame(final_data)
+
+    # ✅ Optional: mark abnormal values
     def is_abnormal(row):
         try:
             val = float(row["Value"].replace(",", "."))
-            rng = re.findall(r"[\d.]+", str(row["Reference Range"]))
+            rng = re.findall(r"[\d.]+", row["Reference Range"])
             if len(rng) >= 2:
                 low, high = float(rng[0]), float(rng[1])
                 return not (low <= val <= high)
@@ -109,28 +123,28 @@ def extract_by_class_explode(image, boxes, indices, class_ids, reader):
     df["Abnormal"] = df.apply(is_abnormal, axis=1)
     return df
 
-# ✅ Draw boxes
+# ✅ Draw bounding boxes
 def draw_boxes(image, boxes, indices):
-    for i in indices.flatten():
+    for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI
+# ✅ Streamlit app UI
 st.set_page_config(layout="wide")
-st.title("🧾 Streamlit OCR App (YOLOv5 + EasyOCR + Explode Logic)")
+st.title("📄 Medical Lab Report OCR (YOLOv5 + EasyOCR + Smart Row Matching)")
 
-uploaded_files = st.file_uploader("📤 Upload JPG medical report(s)", type=["jpg"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type=["jpg"], accept_multiple_files=True)
 
 if uploaded_files:
     model = load_yolo_model()
-    reader = easyocr.Reader(['en'], gpu=False)
+    reader = easyocr.Reader(["en"], gpu=False)
 
     for file in uploaded_files:
-        st.markdown(f"### 📄 File: `{file.name}`")
+        st.markdown(f"### 🖼️ File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        with st.spinner("🔍 Running detection and OCR..."):
+        with st.spinner("🔍 Detecting fields and extracting text..."):
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
@@ -138,26 +152,22 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_by_class_explode(image, boxes, indices, class_ids, reader)
+            df = extract_fields_by_row(image, boxes, indices, class_ids, reader)
 
-        # Highlight abnormal values
         def highlight_abnormal(row):
             return ["background-color: #ffdddd" if row.get("Abnormal") else ""] * len(row)
 
         st.success("✅ Extraction Complete!")
 
         if "Abnormal" in df.columns:
-            styled_df = df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1)
-            st.dataframe(styled_df)
+            st.dataframe(df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1))
         else:
             st.dataframe(df)
 
-        # CSV export
         st.download_button("📥 Download CSV",
                            df.drop(columns="Abnormal", errors="ignore").to_csv(index=False),
                            file_name=f"{file.name}_ocr.csv",
                            mime="text/csv")
 
-        # Show image with bounding boxes
-        boxed_img = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_img, caption="📦 Detected Fields", use_container_width=True)
+        annotated = draw_boxes(image.copy(), boxes, indices)
+        st.image(annotated, caption="📦 Detected Fields", use_container_width=True)
