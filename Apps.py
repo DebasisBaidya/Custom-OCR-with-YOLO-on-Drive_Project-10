@@ -9,7 +9,7 @@ from PIL import Image
 import easyocr
 import os
 
-# ✅ Load YOLOv5 model (your version)
+# ✅ Load YOLOv5 model
 def load_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -34,8 +34,7 @@ def predict_yolo(model, image):
 
 # ✅ Process YOLO predictions
 def process_predictions(predictions, input_image, conf_threshold=0.4, score_threshold=0.25):
-    boxes = []
-    confidences = []
+    boxes, confidences, class_ids = [], [], []
     detections = predictions[0]
     H, W = input_image.shape[:2]
     x_factor = W / 640
@@ -52,14 +51,15 @@ def process_predictions(predictions, input_image, conf_threshold=0.4, score_thre
                 top = int((cy - 0.5 * h) * y_factor)
                 boxes.append([left, top, int(w * x_factor), int(h * y_factor)])
                 confidences.append(float(confidence))
-    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
-    return indices, boxes
+                class_ids.append(class_id)
 
-# ✅ Perform OCR and extract structured fields (using EasyOCR)
-def perform_ocr_on_crops_easyocr(image, boxes, indices, reader):
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
+    return indices, boxes, class_ids
+
+# ✅ Perform OCR using EasyOCR with correct class ID mapping
+def perform_ocr_on_crops_easyocr(image, boxes, indices, class_ids, reader):
     test_names, values, units, ref_ranges = [], [], [], []
 
-    # Replace these indices with your actual class index mapping (YOLO class IDs)
     box_mapping = {
         0: "Test Name",
         1: "Value",
@@ -68,19 +68,21 @@ def perform_ocr_on_crops_easyocr(image, boxes, indices, reader):
     }
 
     for idx in indices.flatten():
-        if idx >= len(boxes):
+        if idx >= len(boxes) or idx >= len(class_ids):
             continue
 
         x, y, w, h = boxes[idx]
+        label_id = class_ids[idx]
+
         x, y = max(0, x), max(0, y)
-        x_end, y_end = min(image.shape[1], x+w), min(image.shape[0], y+h)
+        x_end = min(image.shape[1], x + w)
+        y_end = min(image.shape[0], y + h)
+
         crop = image[y:y_end, x:x_end]
+        result = reader.readtext(crop, detail=0)
+        text = " ".join(result).strip()
 
-        # Run EasyOCR on cropped image
-        results = reader.readtext(crop, detail=0)
-        text = " ".join(results).strip()
-
-        label = box_mapping.get(idx, None)
+        label = box_mapping.get(label_id)
         if label:
             if label == "Test Name": test_names.append(text)
             elif label == "Value": values.append(text)
@@ -112,7 +114,7 @@ def draw_boxes(image, boxes, indices):
 st.set_page_config(layout="wide")
 st.title("🩺 Custom OCR for Medical Reports (YOLOv5 + EasyOCR)")
 
-uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type="jpg", accept_multiple_files=True)
+uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
 if uploaded_files:
     model = load_model()
@@ -123,14 +125,14 @@ if uploaded_files:
         image = np.array(Image.open(uploaded_file).convert("RGB"))
 
         preds, input_img = predict_yolo(model, image)
-        indices, boxes = process_predictions(preds, input_img)
+        indices, boxes, class_ids = process_predictions(preds, input_img)
 
         if len(indices) == 0:
             st.warning("⚠️ No text regions detected!")
             continue
 
         # OCR + Draw
-        df = perform_ocr_on_crops_easyocr(image, boxes, indices, reader)
+        df = perform_ocr_on_crops_easyocr(image, boxes, indices, class_ids, reader)
         st.success("✅ OCR Complete!")
 
         st.dataframe(df.style.set_table_styles([
@@ -140,4 +142,4 @@ if uploaded_files:
         st.download_button("📥 Download CSV", df.to_csv(index=False), file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
 
         boxed_img = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_img, caption="🔍 Detected Regions", use_column_width=True)
+        st.image(boxed_img, caption="🔍 Detected Regions", use_container_width=True)
