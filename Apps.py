@@ -8,16 +8,16 @@ import os
 
 # ✅ Load YOLOv5 model
 def load_model():
-    model_path = "best.onnx"
+    model_path = "best.onnx"  # <-- Update if needed
     if not os.path.exists(model_path):
-        st.error(f"Model not found at {model_path}")
+        st.error(f"❌ Model not found at {model_path}")
         st.stop()
-    net = cv2.dnn.readNet(model_path)
+    net = cv2.dnn.readNetFromONNX(model_path)
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
 
-# ✅ Run YOLO
+# ✅ Run YOLOv5
 def predict_yolo(model, image):
     INPUT_WH_YOLO = 640
     row, col, _ = image.shape
@@ -49,10 +49,11 @@ def process_predictions(predictions, input_image, conf_threshold=0.4, score_thre
                 y = int((cy - 0.5 * bh) * y_factor)
                 boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
                 confidences.append(float(confidence))
+
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
     return indices, boxes
 
-# ✅ Preprocess for better OCR
+# ✅ Preprocess crop image
 def preprocess_image(crop_img):
     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
@@ -61,62 +62,64 @@ def preprocess_image(crop_img):
     roi = cv2.bitwise_not(thresh)
     return roi
 
-# ✅ Run OCR using EasyOCR + index-based mapping
-def perform_ocr_easyocr(image, boxes, indices, reader):
-    test_names, values, units, reference_ranges = [], [], [], []
-
-    # ✅ Use correct index-based box mapping
-    box_mapping = {
-        61: "Test Name",
-        14: "Value",
-        26: "Units",
-        41: "Reference Range"
-    }
-
+# ✅ Smart OCR & dynamic row grouping
+def smart_ocr(image, boxes, indices, reader):
+    # Read all detected regions with EasyOCR
+    extracted = []
     for i in indices.flatten():
-        if i >= len(boxes):
-            continue
+        if i >= len(boxes): continue
         x, y, w, h = boxes[i]
-        x_end = min(x + w, image.shape[1])
-        y_end = min(y + h, image.shape[0])
-        crop_img = image[y:y_end, x:x_end]
-        roi = preprocess_image(crop_img)
+        x_end, y_end = min(x + w, image.shape[1]), min(y + h, image.shape[0])
+        crop = image[y:y_end, x:x_end]
+        roi = preprocess_image(crop)
+        text = " ".join(reader.readtext(roi, detail=0)).strip()
+        if text:
+            extracted.append({"y": y, "x": x, "text": text, "box_id": i})
 
-        result = reader.readtext(roi, detail=0)
-        text = " ".join(result).strip()
+    # Sort vertically (top to bottom), then left to right
+    extracted = sorted(extracted, key=lambda b: (b["y"], b["x"]))
 
-        if i in box_mapping:
-            field = box_mapping[i]
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            if field == "Test Name": test_names.extend(lines)
-            elif field == "Value": values.extend(lines)
-            elif field == "Units": units.extend(lines)
-            elif field == "Reference Range": reference_ranges.extend(lines)
+    # Group into rows (y proximity)
+    rows = []
+    row_threshold = 40
+    for item in extracted:
+        placed = False
+        for row in rows:
+            if abs(item["y"] - row["y"]) < row_threshold:
+                row["fields"].append(item)
+                placed = True
+                break
+        if not placed:
+            rows.append({"y": item["y"], "fields": [item]})
 
-    # ✅ Pad all columns to same length
-    max_len = max(len(test_names), len(values), len(units), len(reference_ranges))
-    test_names += [""] * (max_len - len(test_names))
-    values += [""] * (max_len - len(values))
-    units += [""] * (max_len - len(units))
-    reference_ranges += [""] * (max_len - len(reference_ranges))
+    # Build row-wise table
+    structured_rows = []
+    for row in rows:
+        row_data = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+        for field in sorted(row["fields"], key=lambda f: f["x"]):
+            t = field["text"].lower()
+            if row_data["Test Name"] == "":
+                row_data["Test Name"] = field["text"]
+            elif any(sym in t for sym in ["mg", "g/dl", "μ", "µ", "ng", "u/l", "/ml", "%"]):
+                row_data["Units"] = field["text"]
+            elif any(c in t for c in ["-", "to", "~"]) and len(t) < 20:
+                row_data["Reference Range"] = field["text"]
+            elif row_data["Value"] == "" and t.replace(".", "").isdigit():
+                row_data["Value"] = field["text"]
+        structured_rows.append(row_data)
 
-    return pd.DataFrame({
-        "Test Name": test_names,
-        "Value": values,
-        "Units": units,
-        "Reference Range": reference_ranges
-    })
+    return pd.DataFrame(structured_rows)
 
-# ✅ Draw bounding boxes
+# ✅ Draw detection boxes
 def draw_boxes(image, boxes, indices):
     for i in indices.flatten():
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI
+# ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("🩺 Custom OCR for Lab Reports (YOLOv5 + EasyOCR + Index Mapping)")
+st.title("🧠 Smart OCR for Medical Lab Reports (YOLOv5 + EasyOCR)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -125,24 +128,23 @@ if uploaded_files:
     reader = easyocr.Reader(['en'], gpu=False)
 
     for uploaded_file in uploaded_files:
-        st.markdown(f"### 📌 Processing: `{uploaded_file.name}`")
+        st.markdown(f"### 🔍 Processing: `{uploaded_file.name}`")
         image = np.array(Image.open(uploaded_file).convert("RGB"))
 
         preds, input_img = predict_yolo(model, image)
         indices, boxes = process_predictions(preds, input_img)
 
+        st.code(f"🧩 Box Indices Detected: {indices.flatten().tolist()}")
+
         if len(indices) == 0:
-            st.warning("⚠️ No regions detected.")
+            st.warning("⚠️ No boxes detected.")
             continue
 
-        # Optional debug
-        st.code(f"🔍 Box Indices Detected: {indices.flatten().tolist()}")
-
-        df = perform_ocr_easyocr(image, boxes, indices, reader)
-        st.success("✅ OCR Complete!")
+        df = smart_ocr(image, boxes, indices, reader)
+        st.success("✅ OCR Extraction Complete!")
         st.dataframe(df)
 
         st.download_button("📥 Download CSV", df.to_csv(index=False), file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
 
-        boxed = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed, caption="🧠 Detected Regions", use_container_width=True)
+        boxed_image = draw_boxes(image.copy(), boxes, indices)
+        st.image(boxed_image, caption="📦 Detected Regions", use_container_width=True)
