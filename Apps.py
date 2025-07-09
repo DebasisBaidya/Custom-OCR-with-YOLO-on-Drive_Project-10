@@ -3,11 +3,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image
-import os
 import easyocr
+import os
 import re
 
-# ✅ YOLO class labels
+# ✅ Class map from YOLO training
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -15,34 +15,34 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Load YOLOv5 ONNX model
+# ✅ Load YOLO model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
-        st.error("Model file 'best.onnx' not found.")
+        st.error("❌ Model 'best.onnx' not found in current directory.")
         st.stop()
-    model = cv2.dnn.readNetFromONNX(model_path)
-    model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    return model
+    net = cv2.dnn.readNet(model_path)
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    return net
 
-# ✅ Run YOLO prediction
+# ✅ Run YOLO forward
 def predict_yolo(model, image):
     h, w = image.shape[:2]
-    max_dim = max(h, w)
-    input_img = np.zeros((max_dim, max_dim, 3), dtype=np.uint8)
-    input_img[0:h, 0:w] = image
-    blob = cv2.dnn.blobFromImage(input_img, 1/255, (640, 640), swapRB=True, crop=False)
+    max_rc = max(h, w)
+    input_image = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
+    input_image[:h, :w] = image
+    blob = cv2.dnn.blobFromImage(input_image, 1/255.0, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
-    return preds, input_img
+    return preds, input_image
 
-# ✅ Extract boxes, scores, classes
-def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
+# ✅ Process YOLO detections
+def process_predictions(preds, image, conf_thresh=0.4, score_thresh=0.25):
+    h, w = image.shape[:2]
+    x_factor, y_factor = w / 640, h / 640
+
     boxes, confidences, class_ids = [], [], []
-    h, w = input_img.shape[:2]
-    x_factor = w / 640
-    y_factor = h / 640
 
     for det in preds[0]:
         conf = det[4]
@@ -60,72 +60,78 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ Extract and group rows by Y position
-def extract_rows(image, boxes, indices, class_ids, reader):
-    detections = []
+# ✅ OCR + smart row grouping
+def extract_clean_rows(image, boxes, indices, class_ids, reader):
+    items = []
 
     for i in indices:
         x, y, w, h = boxes[i]
+        label = class_map.get(class_ids[i], "Unknown")
+        cy = y + h // 2
+
         crop = image[y:y+h, x:x+w]
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        roi = cv2.bitwise_not(binary)
+        _, threshed = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        roi = cv2.bitwise_not(threshed)
 
-        try:
-            text = " ".join(reader.readtext(roi, detail=0)).strip()
-        except:
-            text = ""
-
+        text = " ".join(reader.readtext(roi, detail=0)).strip()
         if text:
-            detections.append({
-                "label": class_map.get(class_ids[i], "Unknown"),
+            items.append({
+                "label": label,
                 "text": text,
-                "cy": y + h // 2
+                "cy": cy
             })
 
-    # ✅ Group into rows by Y position
-    detections.sort(key=lambda d: d["cy"])
+    # ✅ Group into rows by Y-center proximity
+    items.sort(key=lambda x: x["cy"])
+    grouped_rows = []
     row_threshold = 35
-    rows = []
 
-    for det in detections:
+    for item in items:
         placed = False
-        for row in rows:
-            if abs(row["cy"] - det["cy"]) < row_threshold:
-                row["items"].append(det)
-                row["cy_vals"].append(det["cy"])
+        for row in grouped_rows:
+            if abs(row["cy"] - item["cy"]) < row_threshold:
+                row["items"].append(item)
+                row["cy_vals"].append(item["cy"])
                 row["cy"] = int(np.mean(row["cy_vals"]))
                 placed = True
                 break
         if not placed:
-            rows.append({"cy": det["cy"], "cy_vals": [det["cy"]], "items": [det]})
+            grouped_rows.append({
+                "cy": item["cy"],
+                "cy_vals": [item["cy"]],
+                "items": [item]
+            })
 
-    # ✅ Build clean DataFrame rows
+    # ✅ Build final rows
     final_data = []
-    for row in rows:
-        test_name_parts = [i["text"] for i in row["items"] if i["label"] == "Test Name"]
-        value = next((i["text"] for i in row["items"] if i["label"] == "Value"), "")
-        units = next((i["text"] for i in row["items"] if i["label"] == "Units"), "")
-        ref_range = next((i["text"] for i in row["items"] if i["label"] == "Reference Range"), "")
+    for row in grouped_rows:
+        row_dict = {
+            "Test Name": "",
+            "Value": "",
+            "Units": "",
+            "Reference Range": ""
+        }
+        test_names = [i["text"] for i in row["items"] if i["label"] == "Test Name"]
+        row_dict["Test Name"] = " ".join(test_names).strip()
 
-        final_data.append({
-            "Test Name": " ".join(test_name_parts).strip(),
-            "Value": value,
-            "Units": units,
-            "Reference Range": ref_range
-        })
+        for i in row["items"]:
+            if i["label"] != "Test Name" and not row_dict[i["label"]]:
+                row_dict[i["label"]] = i["text"]
+
+        final_data.append(row_dict)
 
     df = pd.DataFrame(final_data)
 
-    # ✅ Optional: Flag abnormal values
+    # ✅ Optional: flag abnormal
     def is_abnormal(row):
         try:
             val = float(row["Value"].replace(",", "."))
-            matches = re.findall(r"[\d.]+", row["Reference Range"])
-            if len(matches) >= 2:
-                low, high = float(matches[0]), float(matches[1])
+            nums = re.findall(r"[\d.]+", row["Reference Range"])
+            if len(nums) >= 2:
+                low, high = float(nums[0]), float(nums[1])
                 return not (low <= val <= high)
         except:
             return False
@@ -134,16 +140,16 @@ def extract_rows(image, boxes, indices, class_ids, reader):
     df["Abnormal"] = df.apply(is_abnormal, axis=1)
     return df
 
-# ✅ Draw YOLO boxes
+# ✅ Draw detection boxes
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
-        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit App
+# ✅ Streamlit App UI
 st.set_page_config(layout="wide")
-st.title("🧪 Lab Report OCR – ✅ Final One-Line Fix")
+st.title("🧪 Medical Lab Report OCR – Final Clean Row Extractor")
 
 uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type=["jpg"], accept_multiple_files=True)
 
@@ -152,10 +158,10 @@ if uploaded_files:
     reader = easyocr.Reader(['en'], gpu=False)
 
     for file in uploaded_files:
-        st.markdown(f"### 📄 File: `{file.name}`")
+        st.markdown(f"### 🖼️ File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        with st.spinner("🔍 Extracting..."):
+        with st.spinner("🔍 Detecting & Extracting..."):
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
@@ -163,9 +169,9 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_rows(image, boxes, indices, class_ids, reader)
+            df = extract_clean_rows(image, boxes, indices, class_ids, reader)
 
-        st.success("✅ Extraction Complete!")
+        st.success("✅ Done!")
         st.dataframe(df.drop(columns="Abnormal"))
 
         st.download_button("📥 Download CSV",
@@ -173,5 +179,5 @@ if uploaded_files:
                            file_name=f"{file.name}_ocr.csv",
                            mime="text/csv")
 
-        boxed_img = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_img, caption="📦 Detected Fields", use_container_width=True)
+        boxed = draw_boxes(image.copy(), boxes, indices)
+        st.image(boxed, caption="📦 Detected Fields", use_container_width=True)
