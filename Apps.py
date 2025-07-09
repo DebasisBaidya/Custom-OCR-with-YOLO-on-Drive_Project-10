@@ -1,114 +1,115 @@
-# ✅ Streamlit App for Project 10 - Custom OCR (EasyOCR Version)
-# Purpose: Detect regions from medical lab reports using YOLOv3 and extract text using EasyOCR (no Tesseract needed)
+# ✅ Streamlit App for Custom OCR using YOLOv3 + EasyOCR
+# Purpose: Detect fields in lab reports and extract their text
+# Assumes model is trained on 4 classes and class names are in data.yaml
 
 import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
-import os
 from PIL import Image
+import os
+import yaml
 import easyocr
 
-# 📌 Task 1.1: Load YOLO model from repo
-def load_yolo_model():
-    model_path = "best.onnx"
-    if not os.path.exists(model_path):
-        st.error(f"Model not found at {model_path}. Please check the path or upload the model.")
+# ✅ Load class names from data.yaml
+def load_class_names(yaml_path="data.yaml"):
+    if not os.path.exists(yaml_path):
+        st.error("data.yaml file not found.")
         st.stop()
-    try:
-        model = cv2.dnn.readNet(model_path)
-        model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        return model
-    except cv2.error as e:
-        st.error(f"❌ OpenCV failed to load the ONNX model.\n\nDetails: {e}")
-        st.stop()
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+    return data.get("names", [])
 
-# 📌 Task 1.2: Perform YOLO prediction on uploaded image
-@st.cache_resource
-def predict_yolo(_model, image):
+# ✅ Load YOLOv3 ONNX model
+def load_yolo_model(onnx_path="best.onnx"):
+    if not os.path.exists(onnx_path):
+        st.error("best.onnx not found.")
+        st.stop()
+    net = cv2.dnn.readNetFromONNX(onnx_path)
+    return net
+
+# ✅ Predict bounding boxes using YOLO
+def predict_boxes(net, image):
     INPUT_WH_YOLO = 640
     row, col, _ = image.shape
     max_rc = max(row, col)
     input_image = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
     input_image[0:row, 0:col] = image
-    blob = cv2.dnn.blobFromImage(input_image, 1/255, (INPUT_WH_YOLO, INPUT_WH_YOLO), swapRB=True, crop=False)
-    _model.setInput(blob)
-    preds = _model.forward()
-    return preds, input_image
+    blob = cv2.dnn.blobFromImage(input_image, 1/255, (INPUT_WH_YOLO, INPUT_WH_YOLO), swapRB=True)
+    net.setInput(blob)
+    outputs = net.forward()
+    return outputs[0], input_image
 
-# 📌 Task 2.1: Extract bounding boxes
-def process_predictions(predictions, input_image, conf_threshold=0.4, score_threshold=0.25):
-    boxes, confidences = [], []
-    detections = predictions[0]
+# ✅ Post-process YOLO output
+def process_predictions(detections, input_image, class_names, conf_threshold=0.4, score_threshold=0.25):
+    boxes, confidences, class_ids = [], [], []
     h, w = input_image.shape[:2]
-    x_factor = w / 640
-    y_factor = h / 640
+    x_factor, y_factor = w / 640, h / 640
 
-    for detection in detections:
-        conf = detection[4]
+    for det in detections:
+        conf = det[4]
         if conf > conf_threshold:
-            class_scores = detection[5:]
-            class_id = np.argmax(class_scores)
-            class_score = class_scores[class_id]
-            if class_score > score_threshold:
-                cx, cy, bw, bh = detection[0:4]
+            scores = det[5:]
+            class_id = np.argmax(scores)
+            if scores[class_id] > score_threshold:
+                cx, cy, bw, bh = det[0:4]
                 left = int((cx - 0.5 * bw) * x_factor)
                 top = int((cy - 0.5 * bh) * y_factor)
-                boxes.append([left, top, int(bw * x_factor), int(bh * y_factor)])
+                width = int(bw * x_factor)
+                height = int(bh * y_factor)
+                boxes.append([left, top, width, height])
                 confidences.append(float(conf))
+                class_ids.append(class_id)
 
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
-    return indices, boxes
+    return indices, boxes, class_ids
 
-# 📌 Task 2.2: OCR with EasyOCR on crops
-def perform_ocr_easyocr(image, boxes, indices, reader):
-    results = []
-    for i in indices.flatten():
-        if i >= len(boxes):
-            continue
-        x, y, w, h = boxes[i]
-        x, y = max(0, x), max(0, y)
-        x_end = min(image.shape[1], x + w)
-        y_end = min(image.shape[0], y + h)
-        crop_img = image[y:y_end, x:x_end]
-        result = reader.readtext(crop_img, detail=0)
-        joined = " ".join(result).strip()
-        results.append(joined)
-    return pd.DataFrame({'Text': results})
-
-# 📌 Task 3: Draw bounding boxes
-def draw_bounding_boxes(image, boxes, indices):
+# ✅ Run EasyOCR on cropped regions
+def run_easyocr_on_boxes(image, boxes, indices, reader):
+    texts = []
     for i in indices.flatten():
         x, y, w, h = boxes[i]
-        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        x, y = max(x, 0), max(y, 0)
+        crop = image[y:y+h, x:x+w]
+        result = reader.readtext(crop, detail=0)
+        text = result[0] if result else ""
+        texts.append(text)
+    return texts
+
+# ✅ Draw boxes with labels
+def draw_boxes(image, boxes, indices, class_ids, class_names):
+    for i in indices.flatten():
+        x, y, w, h = boxes[i]
+        label = class_names[class_ids[i]]
+        cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        cv2.putText(image, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (36,255,12), 2)
     return image
 
-# ✅ Task 4: Build Streamlit UI
-st.set_page_config(layout="wide")
-st.title("🩺 Custom OCR for Medical Lab Reports (EasyOCR)")
+# ✅ Streamlit UI setup
+st.set_page_config(page_title="Custom OCR", layout="wide")
+st.title("🩺 Custom OCR for Lab Reports")
+st.markdown("Upload JPG images to extract labeled medical values.")
 
-uploaded_files = st.file_uploader("Upload JPG image(s)", type="jpg", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Image(s)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 if uploaded_files:
-    model = load_yolo_model()
-    reader = easyocr.Reader(['en'])  # English OCR reader
+    class_names = load_class_names("data.yaml")
+    net = load_yolo_model("best.onnx")
+    reader = easyocr.Reader(["en"], gpu=False)
+
     for uploaded_file in uploaded_files:
-        st.markdown(f"### Processing: {uploaded_file.name}")
-        image = np.array(Image.open(uploaded_file))
+        st.subheader(f"📄 File: {uploaded_file.name}")
+        image = np.array(Image.open(uploaded_file).convert("RGB"))
 
-        preds, input_image = predict_yolo(model, image)
-        indices, boxes = process_predictions(preds, input_image)
-        ocr_df = perform_ocr_easyocr(image, boxes, indices, reader)
+        detections, input_image = predict_boxes(net, image)
+        indices, boxes, class_ids = process_predictions(detections, input_image, class_names)
 
-        st.dataframe(ocr_df)
+        ocr_texts = run_easyocr_on_boxes(image, boxes, indices, reader)
+        labels = [class_names[class_ids[i]] for i in indices.flatten()]
+        df = pd.DataFrame({"Label": labels, "Text": ocr_texts})
+        st.dataframe(df)
 
-        st.download_button(
-            label="Download CSV",
-            data=ocr_df.to_csv(index=False),
-            file_name=f'{uploaded_file.name}_ocr.csv',
-            mime='text/csv'
-        )
+        st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{uploaded_file.name}_ocr.csv")
 
-        boxed_img = draw_bounding_boxes(image.copy(), boxes, indices)
-        st.image(boxed_img, caption=f"Annotated Image for {uploaded_file.name}", use_column_width=True)
+        annotated = draw_boxes(image.copy(), boxes, indices, class_ids, class_names)
+        st.image(annotated, caption="📌 Annotated Result", use_container_width=True)
