@@ -10,9 +10,9 @@ import os
 from PIL import Image
 
 # 📌 Task 1.1: Load YOLO model from repo
-# Assumes model is in 'models/best.onnx' relative to app.py
+# Model is in 'best.onnx' relative to app.py
 def load_yolo_model():
-    model_path = "models/best.onnx"
+    model_path = "best.onnx"
     if not os.path.exists(model_path):
         st.error(f"Model not found at {model_path}. Please check the path or upload the model.")
         st.stop()
