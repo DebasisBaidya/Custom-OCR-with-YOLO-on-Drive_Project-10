@@ -1,4 +1,4 @@
-# ✅ Advanced OCR App: YOLOv5 + EasyOCR + PDF + Smart Row Alignment + Range Highlight
+# ✅ Advanced OCR App: YOLOv5 + EasyOCR + Smart Row Mapping + PDF/Image Support
 
 import cv2
 import numpy as np
@@ -10,18 +10,19 @@ import os
 from pdf2image import convert_from_bytes
 import re
 
-# ✅ Load YOLOv5 ONNX Model
+# ✅ Load YOLOv5 ONNX Model using cv2.dnn.readNet()
 def load_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
         st.error(f"Model not found at {model_path}")
         st.stop()
-    net = cv2.dnn.readNetFromONNX(model_path)
+    net = cv2.dnn.readNet(model_path)
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
 
-# ✅ Run YOLO
+# ✅ Run YOLOv5
+
 def predict_yolo(model, image):
     INPUT_WH_YOLO = 640
     row, col, _ = image.shape
@@ -131,10 +132,14 @@ def draw_boxes(image, boxes, indices):
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Convert PDF to Image(s)
+# ✅ Convert PDF or Image
+
 def pdf_to_images(uploaded_pdf):
-    images = convert_from_bytes(uploaded_pdf.read(), dpi=300)
-    return [np.array(img.convert("RGB")) for img in images]
+    if uploaded_pdf.name.lower().endswith(".pdf"):
+        images = convert_from_bytes(uploaded_pdf.read(), dpi=300)
+        return [np.array(img.convert("RGB")) for img in images]
+    else:
+        return [np.array(Image.open(uploaded_pdf).convert("RGB"))]
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
@@ -147,8 +152,7 @@ if uploaded_files:
     reader = easyocr.Reader(['en'], gpu=False)
 
     for file in uploaded_files:
-        ext = file.name.split(".")[-1].lower()
-        pages = pdf_to_images(file) if ext == "pdf" else [np.array(Image.open(file).convert("RGB"))]
+        pages = pdf_to_images(file)
 
         for page_num, image in enumerate(pages):
             st.markdown(f"### 📄 File: `{file.name}` - Page {page_num+1}")
