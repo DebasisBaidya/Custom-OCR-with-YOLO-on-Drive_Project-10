@@ -9,7 +9,7 @@ from pdf2image import convert_from_bytes
 import re
 from itertools import zip_longest
 
-# ✅ Load model using cv2.dnn.readNet
+# ✅ Load model using OpenCV DNN
 def load_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -20,7 +20,7 @@ def load_model():
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
 
-# ✅ YOLO forward pass
+# ✅ Run inference
 def predict_yolo(model, image):
     row, col, _ = image.shape
     max_rc = max(row, col)
@@ -31,14 +31,13 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_image
 
-# ✅ Parse YOLO output
+# ✅ Process model output
 def process_predictions(preds, input_image, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
     H, W = input_image.shape[:2]
     x_factor = W / 640
     y_factor = H / 640
-
     for det in detections:
         conf = det[4]
         if conf > conf_thresh:
@@ -46,15 +45,15 @@ def process_predictions(preds, input_image, conf_thresh=0.4, score_thresh=0.25):
             class_id = np.argmax(scores)
             if scores[class_id] > score_thresh:
                 cx, cy, w, h = det[:4]
-                left = int((cx - 0.5 * w) * x_factor)
-                top = int((cy - 0.5 * h) * y_factor)
-                boxes.append([left, top, int(w * x_factor), int(h * y_factor)])
+                x = int((cx - 0.5 * w) * x_factor)
+                y = int((cy - 0.5 * h) * y_factor)
+                boxes.append([x, y, int(w * x_factor), int(h * y_factor)])
                 confidences.append(float(conf))
                 class_ids.append(class_id)
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices, boxes, class_ids
 
-# ✅ Preprocessing for OCR
+# ✅ OCR preprocessing
 def preprocess_crop(crop):
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
@@ -62,10 +61,10 @@ def preprocess_crop(crop):
     _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     return cv2.bitwise_not(thresh)
 
-# ✅ Extract and group fields row-wise using label & y-position
+# ✅ Extract fields aligned row-wise
 def extract_fields_smart(image, boxes, indices, class_ids, reader):
     field_labels = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
-    detections = []
+    grouped_fields = {"Test Name": [], "Value": [], "Units": [], "Reference Range": []}
 
     for i in indices.flatten():
         x, y, w, h = boxes[i]
@@ -73,47 +72,18 @@ def extract_fields_smart(image, boxes, indices, class_ids, reader):
         roi = preprocess_crop(crop)
         text = " ".join(reader.readtext(roi, detail=0)).strip()
         if text:
-            detections.append({
-                "label": field_labels.get(class_ids[i], f"Class {class_ids[i]}"),
-                "text": text,
-                "x": x,
-                "y": y,
-                "cx": x + w//2,
-                "cy": y + h//2
-            })
+            label = field_labels.get(class_ids[i], f"Class {class_ids[i]}")
+            if label in grouped_fields:
+                grouped_fields[label].append((y, text))
 
-    detections.sort(key=lambda d: d["cy"])
+    for key in grouped_fields:
+        grouped_fields[key] = [t[1] for t in sorted(grouped_fields[key], key=lambda x: x[0])]
+
     rows = []
-    row_thresh = 35
+    for items in zip_longest(grouped_fields["Test Name"], grouped_fields["Value"], grouped_fields["Units"], grouped_fields["Reference Range"], fillvalue=""):
+        rows.append({"Test Name": items[0], "Value": items[1], "Units": items[2], "Reference Range": items[3]})
 
-    for det in detections:
-        placed = False
-        for row in rows:
-            if abs(row["cy"] - det["cy"]) <= row_thresh:
-                row["fields"].append(det)
-                row["cy_vals"].append(det["cy"])
-                row["cy"] = int(np.mean(row["cy_vals"]))
-                placed = True
-                break
-        if not placed:
-            rows.append({"cy": det["cy"], "fields": [det], "cy_vals": [det["cy"]]})
-
-    final_rows = []
-    for row in rows:
-        grouped = {"Test Name": [], "Value": [], "Units": [], "Reference Range": []}
-        for f in row["fields"]:
-            if f["label"] in grouped:
-                grouped[f["label"]].append(f["text"])
-        max_len = max(len(grouped[k]) for k in grouped)
-        for row_items in zip_longest(grouped["Test Name"], grouped["Value"], grouped["Units"], grouped["Reference Range"], fillvalue=""):
-            final_rows.append({
-                "Test Name": row_items[0],
-                "Value": row_items[1],
-                "Units": row_items[2],
-                "Reference Range": row_items[3]
-            })
-
-    df = pd.DataFrame(final_rows)
+    df = pd.DataFrame(rows)
 
     def is_abnormal(row):
         try:
@@ -129,14 +99,14 @@ def extract_fields_smart(image, boxes, indices, class_ids, reader):
     df["Abnormal"] = df.apply(is_abnormal, axis=1)
     return df
 
-# ✅ Draw YOLO boxes
+# ✅ Draw bounding boxes
 def draw_boxes(image, boxes, indices):
     for i in indices.flatten():
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Handle PDFs or images
+# ✅ Handle PDF or Image
 def pdf_to_images(uploaded_file):
     if uploaded_file.name.lower().endswith(".pdf"):
         images = convert_from_bytes(uploaded_file.read(), dpi=300)
@@ -144,9 +114,9 @@ def pdf_to_images(uploaded_file):
     else:
         return [np.array(Image.open(uploaded_file).convert("RGB"))]
 
-# ✅ Streamlit App
+# ✅ Streamlit App UI
 st.set_page_config(layout="wide")
-st.title("🧠 Smart Medical Report OCR (YOLOv5 + EasyOCR + Range Check)")
+st.title("🧠 Medical Report OCR (YOLOv5 + EasyOCR + Aligned Rows)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG or PDF", type=["jpg", "png", "pdf"], accept_multiple_files=True)
 
@@ -158,16 +128,16 @@ if uploaded_files:
         pages = pdf_to_images(file)
 
         for page_num, image in enumerate(pages):
-            st.markdown(f"### 📄 File: `{file.name}` - Page {page_num+1}")
+            st.markdown(f"### 📄 `{file.name}` - Page {page_num+1}")
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
             if len(indices) == 0:
-                st.warning("⚠️ No detections found.")
+                st.warning("⚠️ No text fields detected.")
                 continue
 
             df = extract_fields_smart(image, boxes, indices, class_ids, reader)
-            st.success("✅ OCR Complete!")
+            st.success("✅ Extraction Complete!")
 
             def highlight_abnormal(row):
                 return ["background-color: #ffdddd" if row.get("Abnormal") else ""] * len(row)
