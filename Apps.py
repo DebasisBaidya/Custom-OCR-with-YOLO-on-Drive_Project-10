@@ -119,6 +119,7 @@ def extract_table_by_alignment(image, boxes, reader):
 
     df = pd.DataFrame(final_data)
 
+    # ✅ Optional abnormal detection
     def is_abnormal(row):
         try:
             val = float(row["Value"].replace(",", "."))
@@ -130,7 +131,8 @@ def extract_table_by_alignment(image, boxes, reader):
             return False
         return False
 
-    df["Abnormal"] = df.apply(is_abnormal, axis=1)
+    if not df.empty:
+        df["Abnormal"] = df.apply(is_abnormal, axis=1)
     return df
 
 # ✅ Draw Boxes
@@ -142,7 +144,7 @@ def draw_boxes(image, boxes):
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("📊 OCR for Lab Reports (YOLO + EasyOCR + Box Clustering)")
+st.title("📊 Lab Report OCR (YOLOv5 + EasyOCR + Smart Grouping)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -165,12 +167,18 @@ if uploaded_files:
             df = extract_table_by_alignment(image, boxes, reader)
 
         def highlight_abnormal(row):
+            if "Abnormal" not in row:
+                return [""] * len(row)
             return ["background-color: #ffdddd" if row["Abnormal"] else ""] * len(row)
 
         st.success("✅ Extraction Complete!")
-        st.dataframe(df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1))
 
-        st.download_button("📥 Download CSV", df.drop(columns="Abnormal").to_csv(index=False),
+        if "Abnormal" in df.columns:
+            st.dataframe(df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1))
+        else:
+            st.dataframe(df)
+
+        st.download_button("📥 Download CSV", df.drop(columns="Abnormal", errors="ignore").to_csv(index=False),
                            file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
 
         boxed_img = draw_boxes(image.copy(), boxes)
