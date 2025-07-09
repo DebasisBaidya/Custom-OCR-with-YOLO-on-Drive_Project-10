@@ -8,9 +8,9 @@ import os
 import re
 from itertools import zip_longest
 
-# ✅ Load YOLOv5 model (your preferred style)
+# ✅ Load YOLOv5 model
 def load_yolo_model():
-    model_path = 'Model6/weights/best.onnx'
+    model_path = 'best.onnx'
     if not os.path.exists(model_path):
         st.error(f"Model not found at {model_path}")
         st.stop()
