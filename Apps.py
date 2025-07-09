@@ -6,6 +6,7 @@ from PIL import Image
 import easyocr
 import os
 import re
+from itertools import zip_longest
 
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
@@ -65,61 +66,45 @@ def preprocess_crop(crop_img):
     _, threshed = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return threshed
 
-# ✅ OCR + vertical clustering
-def extract_table_by_alignment(image, boxes, reader):
-    fields = []
+# ✅ Extract and split each box's text into rows
+def extract_table_by_line_split(image, boxes, reader):
+    grouped = {"Test Name": [], "Value": [], "Units": [], "Reference Range": []}
 
     for box in boxes:
         x, y, w, h = box
         crop = image[y:y+h, x:x+w]
         roi = preprocess_crop(crop)
-        text = " ".join(reader.readtext(roi, detail=0)).strip()
-        if text:
-            fields.append({
-                "text": text,
-                "x": x,
-                "y": y,
-                "cy": y + h // 2
-            })
+        text = reader.readtext(roi, detail=0)
+        text = "\n".join([t.strip() for t in text if t.strip()])
 
-    # Group vertically
-    fields.sort(key=lambda d: d["cy"])
-    row_threshold = 25
-    rows = []
+        # Guess field by X position
+        if x < image.shape[1] * 0.3:
+            grouped["Test Name"].append(text)
+        elif x < image.shape[1] * 0.5:
+            grouped["Value"].append(text)
+        elif x < image.shape[1] * 0.7:
+            grouped["Units"].append(text)
+        else:
+            grouped["Reference Range"].append(text)
 
-    for field in fields:
-        placed = False
-        for row in rows:
-            if abs(row["cy"] - field["cy"]) < row_threshold:
-                row["fields"].append(field)
-                row["cy_vals"].append(field["cy"])
-                row["cy"] = int(np.mean(row["cy_vals"]))
-                placed = True
-                break
-        if not placed:
-            rows.append({
-                "cy": field["cy"],
-                "cy_vals": [field["cy"]],
-                "fields": [field]
-            })
+    # Split all fields into individual lines
+    names = "\n".join(grouped["Test Name"]).splitlines()
+    values = "\n".join(grouped["Value"]).splitlines()
+    units = "\n".join(grouped["Units"]).splitlines()
+    ranges = "\n".join(grouped["Reference Range"]).splitlines()
 
-    # Sort row items by x
-    final_data = []
-    for row in rows:
-        sorted_row = sorted(row["fields"], key=lambda d: d["x"])
-        texts = [f["text"] for f in sorted_row]
-        while len(texts) < 4:
-            texts.append("")
-        final_data.append({
-            "Test Name": texts[0],
-            "Value": texts[1],
-            "Units": texts[2],
-            "Reference Range": texts[3]
+    final_rows = []
+    for row in zip_longest(names, values, units, ranges, fillvalue=""):
+        final_rows.append({
+            "Test Name": row[0],
+            "Value": row[1],
+            "Units": row[2],
+            "Reference Range": row[3]
         })
 
-    df = pd.DataFrame(final_data)
+    df = pd.DataFrame(final_rows)
 
-    # ✅ Optional abnormal detection
+    # ✅ Optional abnormal check
     def is_abnormal(row):
         try:
             val = float(row["Value"].replace(",", "."))
@@ -145,7 +130,7 @@ def draw_boxes(image, boxes):
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("📊 Lab Report OCR (YOLOv5 + EasyOCR + Smart Grouping)")
+st.title("📊 Lab Report OCR (YOLOv5 + EasyOCR — Fixed Line Split Version)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -165,7 +150,7 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_table_by_alignment(image, boxes, reader)
+            df = extract_table_by_line_split(image, boxes, reader)
 
         def highlight_abnormal(row):
             return ["background-color: #ffdddd" if row.get("Abnormal", False) else ""] * len(row)
