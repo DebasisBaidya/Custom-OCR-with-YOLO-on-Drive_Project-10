@@ -29,7 +29,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_image
 
-# ✅ Process Predictions
+# ✅ Safe box filtering
 def process_predictions(preds, image, conf_threshold=0.4, score_threshold=0.25):
     boxes = []
     confidences = []
@@ -51,17 +51,21 @@ def process_predictions(preds, image, conf_threshold=0.4, score_threshold=0.25):
                 h = int(h * y_factor)
                 boxes.append([x, y, w, h])
                 confidences.append(float(conf))
-    indices = cv2.dnn.NMSBoxes(boxes, confidences, 0.25, 0.45)
-    return [boxes[i[0]] for i in indices]
 
-# ✅ Preprocess cropped image for OCR
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, 0.25, 0.45)
+    if len(indices) == 0:
+        return []
+    flat_indices = indices.flatten() if hasattr(indices, 'flatten') else indices
+    return [boxes[i] for i in flat_indices]
+
+# ✅ Preprocess image for OCR
 def preprocess_crop(crop_img):
     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     _, threshed = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return threshed
 
-# ✅ OCR + Group by vertical lines (smart)
+# ✅ OCR + vertical clustering
 def extract_table_by_alignment(image, boxes, reader):
     fields = []
 
@@ -78,7 +82,7 @@ def extract_table_by_alignment(image, boxes, reader):
                 "cy": y + h // 2
             })
 
-    # Group vertically by row
+    # Group vertically
     fields.sort(key=lambda d: d["cy"])
     row_threshold = 25
     rows = []
@@ -99,7 +103,7 @@ def extract_table_by_alignment(image, boxes, reader):
                 "fields": [field]
             })
 
-    # Sort fields in each row left to right
+    # Sort row items by x
     final_data = []
     for row in rows:
         sorted_row = sorted(row["fields"], key=lambda d: d["x"])
@@ -138,7 +142,7 @@ def draw_boxes(image, boxes):
 
 # ✅ Streamlit App
 st.set_page_config(layout="wide")
-st.title("📊 OCR for Lab Reports (Clustering-Based Detection)")
+st.title("📊 OCR for Lab Reports (YOLO + EasyOCR + Box Clustering)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
@@ -150,19 +154,22 @@ if uploaded_files:
         st.markdown(f"### 📄 File: `{uploaded_file.name}`")
         image = np.array(Image.open(uploaded_file).convert("RGB"))
 
-        preds, input_img = predict_yolo(model, image)
-        boxes = process_predictions(preds, input_img)
+        with st.spinner("🔍 Running OCR..."):
+            preds, input_img = predict_yolo(model, image)
+            boxes = process_predictions(preds, input_img)
 
-        if not boxes:
-            st.warning("⚠️ No fields detected.")
-            continue
+            if not boxes:
+                st.warning("⚠️ No fields detected.")
+                continue
 
-        df = extract_table_by_alignment(image, boxes, reader)
+            df = extract_table_by_alignment(image, boxes, reader)
 
         def highlight_abnormal(row):
             return ["background-color: #ffdddd" if row["Abnormal"] else ""] * len(row)
 
+        st.success("✅ Extraction Complete!")
         st.dataframe(df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1))
+
         st.download_button("📥 Download CSV", df.drop(columns="Abnormal").to_csv(index=False),
                            file_name=f"{uploaded_file.name}_ocr.csv", mime="text/csv")
 
