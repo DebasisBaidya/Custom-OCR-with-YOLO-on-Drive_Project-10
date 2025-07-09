@@ -173,8 +173,8 @@ if uploaded_files:
         st.success("✅ Extraction Complete!")
 
         if "Abnormal" in df.columns:
-            styled_df = df.style.apply(highlight_abnormal, axis=1)
-            st.dataframe(styled_df.hide_columns(["Abnormal"]))
+            styled_df = df.drop(columns="Abnormal").style.apply(highlight_abnormal, axis=1)
+            st.dataframe(styled_df)
         else:
             st.dataframe(df)
 
