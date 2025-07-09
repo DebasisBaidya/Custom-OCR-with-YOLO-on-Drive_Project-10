@@ -1,6 +1,3 @@
-# ✅ Streamlit App for Project 10 - Custom OCR (YOLOv5 + EasyOCR)
-# Purpose: Detect and structure medical lab report fields using YOLOv5 and EasyOCR
-
 import cv2
 import numpy as np
 import pandas as pd
@@ -56,52 +53,61 @@ def process_predictions(predictions, input_image, conf_threshold=0.4, score_thre
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
     return indices, boxes, class_ids
 
-# ✅ Perform OCR using EasyOCR with correct class ID mapping
-def perform_ocr_on_crops_easyocr(image, boxes, indices, class_ids, reader):
-    test_names, values, units, ref_ranges = [], [], [], []
+# ✅ Group detected fields row-wise by y-coordinate
+def group_boxes_by_row(image, boxes, indices, class_ids, reader):
+    detected = []
 
-    box_mapping = {
-        0: "Test Name",
-        1: "Value",
-        2: "Units",
-        3: "Reference Range"
-    }
-
-    for idx in indices.flatten():
-        if idx >= len(boxes) or idx >= len(class_ids):
+    for i in indices.flatten():
+        if i >= len(boxes) or i >= len(class_ids):
             continue
-
-        x, y, w, h = boxes[idx]
-        label_id = class_ids[idx]
-
+        x, y, w, h = boxes[i]
+        label_id = class_ids[i]
         x, y = max(0, x), max(0, y)
-        x_end = min(image.shape[1], x + w)
-        y_end = min(image.shape[0], y + h)
-
+        x_end, y_end = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y:y_end, x:x_end]
+
         result = reader.readtext(crop, detail=0)
         text = " ".join(result).strip()
 
-        label = box_mapping.get(label_id)
-        if label:
-            if label == "Test Name": test_names.append(text)
-            elif label == "Value": values.append(text)
-            elif label == "Units": units.append(text)
-            elif label == "Reference Range": ref_ranges.append(text)
+        if text:
+            detected.append({
+                "y": y,
+                "x": x,
+                "label": label_id,
+                "text": text
+            })
 
-    # Pad lists to equal length
-    max_len = max(len(test_names), len(values), len(units), len(ref_ranges))
-    test_names.extend([""] * (max_len - len(test_names)))
-    values.extend([""] * (max_len - len(values)))
-    units.extend([""] * (max_len - len(units)))
-    ref_ranges.extend([""] * (max_len - len(ref_ranges)))
+    # ✅ Group detections by y position (row-wise)
+    detected = sorted(detected, key=lambda d: d["y"])  # top to bottom
+    grouped_rows = []
+    row_threshold = 30  # pixels
 
-    return pd.DataFrame({
-        "Test Name": test_names,
-        "Value": values,
-        "Units": units,
-        "Reference Range": ref_ranges
-    })
+    for d in detected:
+        matched = False
+        for row in grouped_rows:
+            if abs(row["y"] - d["y"]) < row_threshold:
+                row["items"].append(d)
+                matched = True
+                break
+        if not matched:
+            grouped_rows.append({"y": d["y"], "items": [d]})
+
+    # ✅ Build structured rows
+    output = []
+    for row in grouped_rows:
+        row_dict = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+        for item in row["items"]:
+            if item["label"] == 0:
+                row_dict["Test Name"] = item["text"]
+            elif item["label"] == 1:
+                row_dict["Value"] = item["text"]
+            elif item["label"] == 2:
+                row_dict["Units"] = item["text"]
+            elif item["label"] == 3:
+                row_dict["Reference Range"] = item["text"]
+        output.append(row_dict)
+
+    return pd.DataFrame(output)
 
 # ✅ Draw detection boxes
 def draw_boxes(image, boxes, indices):
@@ -114,7 +120,7 @@ def draw_boxes(image, boxes, indices):
 st.set_page_config(layout="wide")
 st.title("🩺 Custom OCR for Medical Reports (YOLOv5 + EasyOCR)")
 
-uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type=["jpg", "png"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("📤 Upload JPG/PNG image(s)", type=["jpg", "png"], accept_multiple_files=True)
 
 if uploaded_files:
     model = load_model()
@@ -131,8 +137,8 @@ if uploaded_files:
             st.warning("⚠️ No text regions detected!")
             continue
 
-        # OCR + Draw
-        df = perform_ocr_on_crops_easyocr(image, boxes, indices, class_ids, reader)
+        # Row-wise grouping OCR
+        df = group_boxes_by_row(image, boxes, indices, class_ids, reader)
         st.success("✅ OCR Complete!")
 
         st.dataframe(df.style.set_table_styles([
