@@ -5,9 +5,9 @@ import streamlit as st
 from PIL import Image
 import os
 import easyocr
-from itertools import zip_longest
+import re
 
-# ✅ Class mapping
+# ✅ Class labels from YOLO model
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -15,7 +15,7 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Load YOLOv5 model
+# ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -26,18 +26,18 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# ✅ YOLOv5 detection
+# ✅ Run YOLO on image
 def predict_yolo(model, image):
     h, w = image.shape[:2]
-    max_rc = max(h, w)
-    input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
+    max_dim = max(h, w)
+    input_img = np.zeros((max_dim, max_dim, 3), dtype=np.uint8)
     input_img[0:h, 0:w] = image
     blob = cv2.dnn.blobFromImage(input_img, 1/255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
 
-# ✅ Process predictions
+# ✅ Extract predictions
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     h, w = input_img.shape[:2]
@@ -60,33 +60,18 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ OCR field-wise with Y info
-def extract_fields(image, boxes, indices, class_ids, reader):
-    field_data = {
-        "Test Name": [],
-        "Value": [],
-        "Units": [],
-        "Reference Range": []
-    }
-
-    y_positions = {
-        "Test Name": [],
-        "Value": [],
-        "Units": [],
-        "Reference Range": []
-    }
+# ✅ Group OCR results by Y-center to align into rows
+def extract_rows(image, boxes, indices, class_ids, reader):
+    detections = []
 
     for i in indices:
         x, y, w, h = boxes[i]
-        label = class_map.get(class_ids[i])
-        if not label:
-            continue
-
         crop = image[y:y+h, x:x+w]
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        roi = cv2.bitwise_not(thresh)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        roi = cv2.bitwise_not(binary)
 
         try:
             text = " ".join(reader.readtext(roi, detail=0)).strip()
@@ -94,49 +79,56 @@ def extract_fields(image, boxes, indices, class_ids, reader):
             text = ""
 
         if text:
-            field_data[label].append(text)
-            y_positions[label].append(y + h // 2)
+            detections.append({
+                "label": class_map.get(class_ids[i], "Unknown"),
+                "text": text,
+                "cy": y + h // 2
+            })
 
-    # ✅ Smart merge for fragmented test names
-    tn_data = list(zip(y_positions["Test Name"], field_data["Test Name"]))
-    tn_data.sort()  # by Y
+    # ✅ Smart row grouping
+    detections.sort(key=lambda d: d["cy"])
+    grouped = []
+    row_threshold = 35  # vertical threshold
 
-    merged_test_names = []
-    skip = False
-    for i in range(len(tn_data)):
-        if skip:
-            skip = False
-            continue
-        if i + 1 < len(tn_data):
-            gap = tn_data[i + 1][0] - tn_data[i][0]
-            if gap < 30:
-                combined = tn_data[i][1] + " " + tn_data[i + 1][1]
-                merged_test_names.append(combined)
-                skip = True
-            else:
-                merged_test_names.append(tn_data[i][1])
-        else:
-            merged_test_names.append(tn_data[i][1])
+    for det in detections:
+        placed = False
+        for group in grouped:
+            if abs(group["cy"] - det["cy"]) < row_threshold:
+                group["fields"].append(det)
+                group["cy_vals"].append(det["cy"])
+                group["cy"] = int(np.mean(group["cy_vals"]))
+                placed = True
+                break
+        if not placed:
+            grouped.append({"cy": det["cy"], "cy_vals": [det["cy"]], "fields": [det]})
 
-    # ✅ Align other fields
-    max_len = max(len(merged_test_names),
-                  len(field_data["Value"]),
-                  len(field_data["Units"]),
-                  len(field_data["Reference Range"]))
+    # ✅ Create rows
+    final_rows = []
+    for group in grouped:
+        row = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+        for f in group["fields"]:
+            if f["label"] in row and row[f["label"]] == "":
+                row[f["label"]] = f["text"]
+        final_rows.append(row)
 
-    def pad(col):
-        return col + [""] * (max_len - len(col))
+    df = pd.DataFrame(final_rows)
 
-    df = pd.DataFrame({
-        "Test Name": pad(merged_test_names),
-        "Value": pad(field_data["Value"]),
-        "Units": pad(field_data["Units"]),
-        "Reference Range": pad(field_data["Reference Range"])
-    })
+    # Optional: Flag abnormalities
+    def is_abnormal(row):
+        try:
+            val = float(row["Value"].replace(",", "."))
+            matches = re.findall(r"[\d.]+", row["Reference Range"])
+            if len(matches) >= 2:
+                low, high = float(matches[0]), float(matches[1])
+                return not (low <= val <= high)
+        except:
+            return False
+        return False
 
+    df["Abnormal"] = df.apply(is_abnormal, axis=1)
     return df
 
-# ✅ Draw boxes
+# ✅ Draw boxes for preview
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
@@ -145,7 +137,7 @@ def draw_boxes(image, boxes, indices):
 
 # ✅ Streamlit UI
 st.set_page_config(layout="wide")
-st.title("🧪 Medical Lab OCR – Clean Rows, Merged Test Names")
+st.title("🧪 Final Medical OCR App – Smart Row Grouping (vFinal)")
 
 uploaded_files = st.file_uploader("📤 Upload JPG image(s)", type=["jpg"], accept_multiple_files=True)
 
@@ -157,7 +149,7 @@ if uploaded_files:
         st.markdown(f"### 📄 File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        with st.spinner("🔍 Extracting..."):
+        with st.spinner("🔍 Detecting and Extracting..."):
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
@@ -165,15 +157,15 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected.")
                 continue
 
-            df = extract_fields(image, boxes, indices, class_ids, reader)
+            df = extract_rows(image, boxes, indices, class_ids, reader)
 
-        st.success("✅ Done!")
-        st.dataframe(df)
+        st.success("✅ Extraction Complete!")
+        st.dataframe(df.drop(columns="Abnormal"))
 
         st.download_button("📥 Download CSV",
-                           df.to_csv(index=False),
+                           df.drop(columns="Abnormal").to_csv(index=False),
                            file_name=f"{file.name}_ocr.csv",
                            mime="text/csv")
 
         boxed = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed, caption="📦 Detected Boxes", use_container_width=True)
+        st.image(boxed, caption="📦 Detected Fields", use_container_width=True)
