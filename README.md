@@ -212,7 +212,9 @@ streamlit run Apps.py
 
 ## 🖼️ Streamlit UI Screenshot
 
-![streamlit\_ui](screenshots/streamlit_full.png)
+<p align="center">
+  <img src="screenshots/streamlit_full.png" alt="streamlit_ui" />
+</p>
 
 ---
 
