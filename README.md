@@ -21,6 +21,9 @@ Manually entering such data is slow, repetitive, and error-prone. So I designed 
 
 This is not just a proof of concept — it's a fully working pipeline with model training, preprocessing, post-processing, UI deployment, and CSV export.
 
+> 🔗 Try the app: [🌐 Streamlit Live](https://your-streamlit-app-url)
+> 🎬 Watch Demo: [📽 YouTube Video](https://your-demo-video-link)
+
 > 🔗 [🌐 Streamlit App](https://your-streamlit-app-url) | 🎥 [📽 Demo Video](https://your-demo-video-link)
 
 ---
@@ -124,6 +127,92 @@ The pipeline follows these logical steps:
 
 ---
 
+## 💡 What I Did — Full Technical Walkthrough
+
+### 🧷 1. Image Labeling
+
+```bash
+# Labeled the report images using LabelImg
+# Saved bounding boxes for 4 classes: Test Name, Value, Units, Reference Range
+```
+
+### 📤 2. Convert Annotations (XML → YOLO txt)
+
+```python
+# Used Extract_Text_from_XML.ipynb to parse XML files
+# Extracted filenames, dimensions, and bounding boxes
+# Normalized coordinates and encoded labels for YOLOv3 format
+```
+
+### ⚙️ 3. Model Training on Google Colab (GPU)
+
+```bash
+# Mounted Google Drive
+from google.colab import drive
+drive.mount('/content/drive')
+
+# Cloned YOLO repo and installed dependencies
+!git clone https://github.com/ultralytics/yolov3.git
+%cd yolov3
+!pip install -r requirements.txt
+
+# Trained YOLOv3 model with custom dataset
+!python train.py --img 640 --batch 2 --epochs 200 --data /content/data.yaml --weights yolov3.pt --name lab_report_model
+```
+
+### 🧠 4. Export Model to ONNX
+
+```bash
+# After training, exported best weights to ONNX format for OpenCV inference
+!python export.py --weights runs/train/lab_report_model/weights/best.pt --img 640 --batch 1 --device 0 --include onnx
+```
+
+### 🔍 5. Inference + Preprocessing (OpenCV DNN)
+
+```python
+# Used Apps.py and main.py for inference
+# Resized input image to 640x640
+# Applied padding to maintain aspect ratio
+# Created OpenCV blob and ran model forward pass
+# Applied NMS to filter predictions
+```
+
+### 🧾 6. OCR with Tesseract/EasyOCR
+
+```python
+# Cropped bounding boxes and performed OCR with:
+# - Grayscale conversion
+# - Gaussian blur
+# - Thresholding + inversion for better OCR
+# Used EasyOCR for robustness on different font styles
+```
+
+### 📊 7. Post-Processing
+
+```python
+# Merged broken "Test Name" fragments (e.g., "Total" + "Cholesterol")
+# Aligned results into a structured DataFrame
+# Downloaded results as CSV with download button
+```
+
+### 🌐 8. Streamlit UI Deployment
+
+```bash
+# User uploads JPG file
+# YOLOv3 detects regions
+# OCR extracts and displays table
+# Annotated image + CSV download buttons
+streamlit run Apps.py
+```
+
+---
+
+## 🖼️ Streamlit UI Screenshot
+
+![streamlit\_ui](screenshots/streamlit_full.png)
+
+---
+
 ## 🙋‍♂️ About Me
 
 Hi, I’m **Debasis Baidya** from Kolkata 👋
@@ -150,25 +239,6 @@ With **11+ years** of experience in the MIS domain, I am now transitioning into 
   </a>
 </p>
 
----
-
-## ⚙️ Try It Locally
-
-```bash
-# Run locally with image input
-python main.py --image path/to/image.jpg
-
-# Streamlit App
-streamlit run Apps.py
-```
-
----
-
-## 💰 Cost & Resources
-
-* 💻 Google Colab (Free Tier)
-* 🚀 Training Time: \~2 hours for 200 epochs
-* 💸 Total Cost: ₹0 (under free limits)
 
 ---
 
