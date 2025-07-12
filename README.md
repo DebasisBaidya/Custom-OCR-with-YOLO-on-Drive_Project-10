@@ -243,3 +243,23 @@ With **11+ years** of experience in the MIS domain, I am now transitioning into 
 ---
 
 > 🚀 This project shows how machine learning, OCR, and a clean UI can turn static lab reports into structured, digital, and actionable data. Ideal for EMRs, diagnostic apps, and healthcare analytics. 🏥
+
+
+--
+
+# 🧾 Custom Object Character Recognition (OCR) on Google Drive
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-Used-3776AB?logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/OpenCV-Used-5C3EE8?logo=opencv&logoColor=white" />
+  <img src="https://img.shields.io/badge/NumPy-Used-4D77CF?logo=numpy&logoColor=white" />
+  <img src="https://img.shields.io/badge/Pandas-Used-150458?logo=pandas&logoColor=white" />
+  <img src="https://img.shields.io/badge/PIL-Used-FD9F00?logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/Tesseract_OCR-Used-525252?logo=google&logoColor=white" />
+  <img src="https://img.shields.io/badge/PyTesseract-Used-F89820?logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/EasyOCR-Used-FF6600?logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/YOLOv3-Used-28A745?logo=yolo&logoColor=white" />
+  <img src="https://img.shields.io/badge/ONNX-Used-9058B4?logo=onnx&logoColor=white" />
+  <img src="https://img.shields.io/badge/Streamlit-Used-FF4B4B?logo=streamlit&logoColor=white" />
+</p>
+
