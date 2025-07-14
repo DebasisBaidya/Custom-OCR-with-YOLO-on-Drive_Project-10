@@ -46,7 +46,7 @@ def split_value_unit(txt: str):
 # --------------------------------------------------
 @st.cache_resource(show_spinner=False)
 def load_yolo_model():
-    net = cv2.dnn.readNetFromONNX("Models/best.onnx")
+    net = cv2.dnn.readNetFromONNX("models/best.onnx")
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return net
