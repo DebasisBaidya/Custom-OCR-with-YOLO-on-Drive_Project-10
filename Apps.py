@@ -1,13 +1,13 @@
 # --------------------------------------------------
-# 🏗️ I'm importing required libraries
+# 🏗️ I'm importing all required libraries
 # --------------------------------------------------
 import os, cv2, re, numpy as np, pandas as pd, streamlit as st
 from PIL import Image
 import easyocr
-import random
+import random  # (I'm using this for generating a fresh key)
 
 # --------------------------------------------------
-# 🧠 I'm defining YOLO class mapping
+# 🧠 I'm defining the class mapping for YOLO labels
 # --------------------------------------------------
 class_map = {0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"}
 
@@ -22,53 +22,59 @@ def load_yolo_model():
     return cv2.dnn.readNetFromONNX(model_path)
 
 # --------------------------------------------------
-# 🔍 I'm running YOLO prediction
+# 🔍 I'm running YOLO prediction on a padded copy
 # --------------------------------------------------
 def predict_yolo(model, image):
     h, w = image.shape[:2]
-    max_rc = max(h, w)                                  # I'm finding max side
+    max_side = max(h, w)
 
-    padded = np.zeros((max_rc, max_rc, 3), np.uint8)    # I'm creating black square
-    padded[:h, :w] = image                              # I'm pasting original
+    # I'm padding the image to a square canvas (top‑left anchored)
+    padded = np.zeros((max_side, max_side, 3), dtype=np.uint8)
+    padded[:h, :w] = image
 
+    # I'm preparing the blob for YOLO
     blob = cv2.dnn.blobFromImage(padded, 1 / 255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
-    return preds, padded
+    return preds, padded  # (I’m returning padded so coordinates line up)
 
 # --------------------------------------------------
-# 📦 I'm post-processing predictions
+# 📦 I'm post‑processing YOLO predictions
 # --------------------------------------------------
-def process_predictions(preds, padded_img, conf=0.4, score=0.25):
+def process_predictions(preds, padded_img, conf_thresh=0.4, score_thresh=0.25):
+    boxes, confidences, class_ids = [], [], []
     H, W = padded_img.shape[:2]
-    xf, yf = W / 640, H / 640
-    boxes, confs, ids = [], [], []
+    x_factor, y_factor = W / 640, H / 640
 
     for det in preds[0]:
-        if det[4] > conf:
-            cls_scores = det[5:]
-            cls = np.argmax(cls_scores)
-            if cls_scores[cls] > score:
+        conf = det[4]
+        if conf > conf_thresh:
+            scores = det[5:]
+            cls = np.argmax(scores)
+            if scores[cls] > score_thresh:
                 cx, cy, bw, bh = det[:4]
-                x = int((cx - bw / 2) * xf)
-                y = int((cy - bh / 2) * yf)
-                boxes.append([x, y, int(bw * xf), int(bh * yf)])
-                confs.append(float(det[4]))
-                ids.append(cls)
+                x = int((cx - bw / 2) * x_factor)
+                y = int((cy - bh / 2) * y_factor)
+                boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
+                confidences.append(float(conf))
+                class_ids.append(cls)
 
-    idxs = cv2.dnn.NMSBoxes(boxes, confs, score, 0.45)
-    return (idxs.flatten() if len(idxs) else []), boxes, ids
+    idxs = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
+    return (idxs.flatten() if len(idxs) else []), boxes, class_ids
 
 # --------------------------------------------------
-# 🔡 I'm extracting text cell-by-cell
+# 🔡 I'm extracting exactly one line of text per field
 # --------------------------------------------------
-def extract_table_text(orig_img, boxes, idxs, ids):
+def extract_table_text(orig_img, boxes, idxs, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {v: [] for v in class_map.values()}
 
+    H, W = orig_img.shape[:2]
+
     for i in idxs:
         x, y, w, h = boxes[i]
-        H, W = orig_img.shape[:2]
+
+        # I'm clamping coordinates so crops stay inside the original image
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(W, x + w), min(H, y + h)
         if x2 <= x1 or y2 <= y1:
@@ -78,68 +84,69 @@ def extract_table_text(orig_img, boxes, idxs, ids):
         if crop.size == 0:
             continue
 
+        # I'm enhancing the crop for better OCR accuracy
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        roi = cv2.bitwise_not(binary)
+        _, bin_inv = cv2.threshold(
+            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        roi = cv2.bitwise_not(bin_inv)
 
+        # I'm reading text lines from the ROI
         try:
             lines = reader.readtext(roi, detail=0)
         except Exception:
             lines = []
 
-        label = class_map.get(ids[i], "Field")
-        for line in lines:
-            clean = line.strip()
-            if clean:
-                results[label].append(clean)
+        label = class_map.get(class_ids[i], "Field")
 
-    # I'm de-duplicating each column while keeping order
+        # ✅ I'm keeping only the *first* non‑empty line => one value per box
+        clean_lines = [ln.strip() for ln in lines if ln.strip()]
+        results[label].append(clean_lines[0] if clean_lines else "")
+
+    # I'm padding shorter columns so DataFrame remains rectangular
+    max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
-        seen, dedup = set(), []
-        for txt in results[k]:
-            if txt not in seen:
-                dedup.append(txt)
-                seen.add(txt)
-        results[k] = dedup
-
-    # I'm setting the expected row count (using longest of Name/Value)
-    row_cnt = max(len(results["Test Name"]), len(results["Value"]))
-    if row_cnt == 0:
-        return pd.DataFrame()  # I'm returning empty if nothing detected
-
-    # I'm trimming/padding every column to row_cnt
-    for k in results:
-        results[k] = (results[k] + [""] * row_cnt)[:row_cnt]
+        results[k] += [""] * (max_len - len(results[k]))
 
     return pd.DataFrame(results)
 
 # --------------------------------------------------
-# 🖼️ I'm drawing bboxes on original image
+# 🖼️ I'm drawing boxes on the *original* (no black bars)
 # --------------------------------------------------
-def draw_boxes(orig_img, boxes, idxs, ids):
-    out = orig_img.copy()
+def draw_boxes_on_original(orig_img, boxes, idxs, class_ids):
+    annotated = orig_img.copy()
+    H, W = annotated.shape[:2]
+
     for i in idxs:
         x, y, w, h = boxes[i]
-        cv2.rectangle(out, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        # I'm clamping in case a box spills beyond the edge
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(W, x + w), min(H, y + h)
+
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(
-            out,
-            class_map.get(ids[i], "Field"),
-            (x, y - 10 if y - 10 > 10 else y + 20),
+            annotated,
+            class_map.get(class_ids[i], "Field"),
+            (x1, y1 - 10 if y1 - 10 > 10 else y1 + 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (0, 0, 255),
             2,
         )
-    return out
+
+    return annotated
 
 # --------------------------------------------------
-# 🎯 I'm building Streamlit UI
+# 🎯 I'm building the Streamlit interface
 # --------------------------------------------------
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-st.markdown("<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>", unsafe_allow_html=True)
+st.markdown(
+    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
+    unsafe_allow_html=True,
+)
 
 st.markdown(
     """
@@ -154,52 +161,80 @@ st.markdown(
 st.markdown(
     """
     <div style='text-align:center; margin-bottom:0;'>
-        📤 <b>Upload lab reports (.jpg, .jpeg, .png)</b><br>
+        📤 <b>Upload lab reports (.jpg, .jpeg, or .png)</b><br>
         <small>📂 Please upload one or more images to start extraction.</small>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# I'm using one dynamic key so “Clear All” can reset uploader in one click
-u_key = st.session_state.get("uploader_key", "file_uploader_0")
-files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key=u_key)
+# I'm setting or retrieving a unique uploader key from session_state
+uploader_key = st.session_state.get("uploader_key", "file_uploader_0")
+files = st.file_uploader(
+    " ",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+    key=uploader_key,
+)
 
 # --------------------------------------------------
-# 📑 I'm processing each uploaded image
+# 📑 I'm processing every uploaded image
 # --------------------------------------------------
 if files:
     model = load_yolo_model()
 
     for f in files:
-        st.markdown(f"<h4 style='text-align:center;'>📄 Processing: {f.name}</h4>", unsafe_allow_html=True)
+        st.markdown(
+            f"<h4 style='text-align:center;'>📄 Processing: {f.name}</h4>",
+            unsafe_allow_html=True,
+        )
 
-        with st.spinner("🔍 Running YOLOv5 detection and OCR..."):
-            orig = np.array(Image.open(f).convert("RGB"))
-            preds, padded = predict_yolo(model, orig)
-            idxs, boxes, ids = process_predictions(preds, padded)
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            with st.spinner("🔍 Running YOLOv5 detection and OCR..."):
+                # I'm loading the original image
+                orig = np.array(Image.open(f).convert("RGB"))
 
-            if not len(idxs):
-                st.warning("⚠️ No fields detected in this image.")
-                continue
+                # I'm predicting with YOLO
+                preds, padded = predict_yolo(model, orig)
 
-            df = extract_table_text(orig, boxes, idxs, ids)
+                # I'm post‑processing predictions
+                idxs, boxes, class_ids = process_predictions(preds, padded)
 
+                if not len(idxs):
+                    st.warning("⚠️ No fields detected in this image.")
+                    continue
+
+                # I'm extracting the text from original image (no black padding)
+                df = extract_table_text(orig, boxes, idxs, class_ids)
+
+        # I'm showing the extraction results
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
+        # I'm displaying the annotated original image
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields</h5>", unsafe_allow_html=True)
-        st.image(draw_boxes(orig, boxes, idxs, ids), use_container_width=True)
+        st.image(draw_boxes_on_original(orig, boxes, idxs, class_ids), use_container_width=True)
 
-        # I'm letting the reviewer download the CSV
-        st.download_button("⬇️ Download CSV", df.to_csv(index=False), f"{f.name}_ocr.csv", "text/csv")
+        # I'm adding download & clear‑all buttons
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            col_dl, col_clr = st.columns(2)
 
-# --------------------------------------------------
-# 🧹 I'm adding ONE global “Clear All” button
-# --------------------------------------------------
-if st.button("🧹 Clear All"):
-    # I'm wiping the uploader & rerunning the script
-    st.session_state.pop("uploaded_files", None)
-    st.session_state["uploader_key"] = f"file_uploader_{random.randint(1, 1_000_000)}"
-    st.experimental_rerun()
+            # ✅ I'm giving the reviewer a CSV download
+            with col_dl:
+                st.download_button(
+                    "⬇️ Download CSV",
+                    df.to_csv(index=False),
+                    file_name=f"{f.name}_ocr.csv",
+                    mime="text/csv",
+                )
+
+            # ✅ I'm resetting everything in one click
+            with col_clr:
+                if st.button("🧹 Clear All"):
+                    # I'm generating a fresh uploader key
+                    st.session_state["uploader_key"] = f"file_uploader_{random.randint(1_000_000, 9_999_999)}"
+                    # I'm forcing a rerun so the widget resets instantly
+                    st.experimental_rerun()
