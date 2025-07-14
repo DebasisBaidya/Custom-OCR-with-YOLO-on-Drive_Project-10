@@ -1,0 +1,5 @@
+📝 Project 10 - Custom OCR Report
+Model used: YOLOv3 (ONNX)
+OCR Engine: Tesseract
+Processed image: /content/drive/MyDrive/CustomOCR/datasets/thyrocare_0_2987.jpg
+OCR output saved at: /content/drive/MyDrive/CustomOCR/results/ocr_results.csv
