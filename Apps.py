@@ -25,14 +25,17 @@ class_map = {
 # --------------------------------------------------
 def correct_unit(text):
     text = text.lower().strip()
-    # basic cleanup
-    text = re.sub(r'[^a-z0-9/µ]', '', text)
-    # direct mappings only
+    text = re.sub(r'[^a-z0-9/µ]', '', text)      # keeping slash and µ
     simple_map = {
-        "mgdl": "mg/dl",
-        "ugdl": "µg/dl",
-        "ngdl": "ng/dl",
-        "iu/ml": "IU/ml",
+        "mgdl":  "mg/dl",
+        "mg/dl": "mg/dl",
+        "ugdl":  "µg/dl",
+        "ug/dl": "µg/dl",
+        "µgdl":  "µg/dl",
+        "µg/dl": "µg/dl",
+        "ngdl":  "ng/dl",
+        "ng/dl": "ng/dl",
+        "iu/ml":  "IU/ml",
         "miu/ml": "mIU/ml",
         "µiu/ml": "µIU/ml",
         "uiu/ml": "µIU/ml",
@@ -168,7 +171,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="uploaded_files")
+uploaded_files = st.file_uploader(
+    " ",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+    key=st.session_state.get("uploader_key", "file_uploader"),
+)
 
 if uploaded_files:
     model = load_yolo_model()
@@ -198,10 +206,16 @@ if uploaded_files:
             col_dl, col_rst = st.columns(2)
             with col_dl:
                 st.download_button(
-                    "⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv"
+                    "⬇️ Download CSV",
+                    df.to_csv(index=False),
+                    file_name=f"{file.name}_ocr.csv",
+                    mime="text/csv",
                 )
             with col_rst:
-                if st.button("🧹 Clear All"):
-                    st.session_state["uploaded_files"] = []
-                    st.session_state["extracted_dfs"] = []
-                    st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
+                # --------------------------------------------------
+                # 🧹 I'm clearing all session data & rerunning app
+                # --------------------------------------------------
+                if st.button("🧹 Clear All", key="clear_btn"):
+                    for k in ("uploaded_files", "extracted_dfs", "uploader_key"):
+                        st.session_state.pop(k, None)
+                    st.experimental_rerun()
