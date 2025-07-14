@@ -120,15 +120,16 @@ st.set_page_config(page_title="Lab Report OCR - No Unit Classification", layout=
 # Showing header
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR - Extract Table Without Unit Classification</h2>", unsafe_allow_html=True)
 
-# Showing upload instructions and inline message on the same line, centered
+# Showing upload instructions with a line break and no extra spacing
 st.markdown(
     "<div style='text-align:center; font-size:16px;'>"
-    "📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b> 📂 Please upload lab report images to start extraction."
+    "📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>"
+    "📂 Please upload lab report images to start extraction."
     "</div>",
     unsafe_allow_html=True,
 )
 
-# Showing file uploader below the instruction
+# Showing file uploader below the instructions
 uploaded_files = st.file_uploader("", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 # Handling uploaded files
@@ -167,7 +168,3 @@ if uploaded_files:
                 if st.button("🔄 Reset All"):
                     st.session_state.clear()
                     st.experimental_rerun()
-
-else:
-    # Showing info message if no files uploaded (below uploader)
-    st.info("⚠️ Please upload one or more lab report images to start extraction.")
