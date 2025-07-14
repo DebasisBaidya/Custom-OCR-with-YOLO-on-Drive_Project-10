@@ -102,21 +102,26 @@ def extract_table_text(image, boxes, indices, class_ids):
         _, bin = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(bin)
 
-        # 🔍 OCR
+        # 🔍 OCR – keep only the first line to avoid duplicates
         try:
             lines = reader.readtext(roi, detail=0)
         except Exception:
             lines = []
 
-        for line in lines:
-            clean = line.strip()
+        if lines:
+            clean = lines[0].strip()
             if clean:
                 results[label].append(clean)
 
-    # 🧱 Padding columns so table lines up
-    max_len = max(len(v) for v in results.values()) if results else 0
-    for k in results:
-        results[k] += [""] * (max_len - len(results[k]))
+    # 🧱 Align lengths to number of Test Names (row count)
+    row_cnt = len(results["Test Name"]) if results["Test Name"] else max(
+        len(v) for v in results.values()
+    )
+    for k, v in results.items():
+        if len(v) < row_cnt:
+            v.extend([""] * (row_cnt - len(v)))
+        elif len(v) > row_cnt:
+            results[k] = v[:row_cnt]
 
     return pd.DataFrame(results)
 
@@ -206,7 +211,10 @@ if uploaded_files:
             "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
             unsafe_allow_html=True,
         )
-        st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_column_width=True)
+        st.image(
+            draw_boxes(image.copy(), boxes, indices, class_ids),
+            use_container_width=True,  # ✅ updated: no deprecation warning
+        )
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
