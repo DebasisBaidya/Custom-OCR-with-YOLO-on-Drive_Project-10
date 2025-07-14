@@ -12,12 +12,13 @@ import easyocr
 
 # --------------------------------------------------
 # 🧠 I'm defining class mapping for detected fields
+#     (0 ➜ Test Name, 1 ➜ Value, 2 ➜ Units, 3 ➜ Reference Range)
 # --------------------------------------------------
 class_map = {
     0: "Test Name",
     1: "Value",
     2: "Units",
-    3: "Reference Range"
+    3: "Reference Range",
 }
 
 # --------------------------------------------------
@@ -28,20 +29,22 @@ _unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([^\d\s]+.*)$", re.I)
 
 # ✅ Normalising common unit spellings / cases
 UNIT_NORMALISE = {
-    "g/dl":   "g/dL",
-    "mg/dl":  "mg/dL",
+    "g/dl": "g/dL",
+    "mg/dl": "mg/dL",
     "mmol/l": "mmol/L",
     "μiu/ml": "µIU/mL",
 }
+
 
 def _split_value_unit(txt: str):
     """🔍 Returning clean (value, unit); blank unit if none found."""
     m = _unit_rx.match(txt)
     if not m:
-        return txt.strip(), ""          # nothing to split
+        return txt.strip(), ""  # nothing to split
     val, unit = m.groups()
     unit = UNIT_NORMALISE.get(unit.lower(), unit)  # fixing case / symbol
     return val.strip(), unit.strip()
+
 
 # --------------------------------------------------
 # 🧠 I'm loading YOLOv5 ONNX model
@@ -53,6 +56,7 @@ def load_yolo_model():
         st.stop()
     model = cv2.dnn.readNetFromONNX(model_path)
     return model
+
 
 # --------------------------------------------------
 # 📸 I'm running YOLOv5 detection on input image
@@ -68,6 +72,7 @@ def predict_yolo(model, image):
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
+
 
 # --------------------------------------------------
 # 📦 I'm post‑processing YOLO outputs
@@ -93,33 +98,40 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
+
 # --------------------------------------------------
 # 🔡 I'm extracting OCR text for every detected field
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
+    """🧠 Running EasyOCR on each detected crop and returning a tidy DataFrame."""
     reader = easyocr.Reader(["en"], gpu=False)
-    results = {key: [] for key in class_map.values()}
+
+    # ✅ Initialising storage for each column
+    results = {k: [] for k in ["Test Name", "Value", "Units", "Reference Range"]}
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
+
+        # 📦 Getting crop box & label
         x, y, w, h = boxes[i]
-        label = class_map.get(class_ids[i], "Field")
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y1:y2, x1:x2]
         if crop.size == 0:
             continue
 
-        # 🧹 Basic preprocessing to help EasyOCR
+        # 🧠 Mapping class ID ➜ label via class_map
+        label = class_map.get(class_ids[i], "Field")
+
+        # 🧹 Quick pre‑processing before OCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(
-            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
-        roi = cv2.bitwise_not(binary)
+        _, bin = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        roi = cv2.bitwise_not(bin)
 
+        # 🔍 OCR
         try:
             lines = reader.readtext(roi, detail=0)
         except Exception:
@@ -130,24 +142,22 @@ def extract_table_text(image, boxes, indices, class_ids):
             if not clean:
                 continue
 
-            # 🧠 NEW: splitting mixed value+unit strings on the fly
-            if label == "Value" and "Units" in results:
+            # 🧠 Splitting mixed value+unit strings on the fly
+            if label == "Value":
                 val, unit = _split_value_unit(clean)
                 results["Value"].append(val)
                 if unit:
                     results["Units"].append(unit)
-                continue  # next OCR line
+            else:
+                results[label].append(clean)
 
-            # 📌 Regular behaviour for all other cases
-            results[label].append(clean)
-
-    # 🧱 Padding columns so DataFrame aligns properly
+    # 🧱 Padding so each column is equal length
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
-    df = pd.DataFrame(results)
-    return df
+    return pd.DataFrame(results)
+
 
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
@@ -167,6 +177,7 @@ def draw_boxes(image, boxes, indices, class_ids):
             2,
         )
     return image
+
 
 # --------------------------------------------------
 # 🎯 I'm building the Streamlit app UI
@@ -255,5 +266,7 @@ if uploaded_files:
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
                     # Changing uploader key to force reset of widget
-                    st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
+                    st.session_state[
+                        "uploader_key"
+                    ] = "file_uploader_" + str(np.random.randint(1_000_000))
                     st.rerun()  # 🔁 Reloading the app
