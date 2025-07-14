@@ -133,40 +133,37 @@ def draw_boxes(image, boxes, indices):
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI: I am designing the app layout and interactions
+# ✅ Streamlit UI starts here
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
 # I am showing the main title of the app
+st.markdown("<h2 style='text-align: center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
+
+# I am giving a short description
+st.markdown("<p style='text-align: center;'>Upload your lab report(s) in JPG format to extract structured medical data using YOLOv5 + EasyOCR.</p>", unsafe_allow_html=True)
+
+# I am guiding users to download JPGs from Google Drive to test
+st.markdown("<p style='text-align: center;'>📥 Download sample Lab Reports (JPG) to test and upload below:</p>", unsafe_allow_html=True)
 st.markdown(
-    "<h2 style='text-align: center;'>🧾 Lab Report OCR Extractor</h2>", 
+    "<div style='text-align: center; padding: 6px;'>"
+    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>"
+    "🔗 Click here to access the Google Drive Folder</a></div>",
     unsafe_allow_html=True
 )
 
-# I am giving a small description of what this app is doing
-st.markdown(
-    "<p style='text-align: center;'>Upload your lab report(s) in JPG format to extract structured medical data using YOLOv5 + EasyOCR.</p>", 
-    unsafe_allow_html=True
-)
+# I am showing the "How it works" section with center-aligned text
+st.markdown("<h4 style='text-align:center;'>📘 How it works</h4>", unsafe_allow_html=True)
+st.markdown("""
+<div style='text-align: center;'>
+1. Upload one or more `.jpg` lab reports.<br>
+2. Model detects fields like <b>Test Name, Value, Units, Reference Range</b>.<br>
+3. EasyOCR reads text from detected boxes.<br>
+4. Test Names split over lines are merged.<br>
+5. Table is shown with CSV download and box overlay.
+</div>
+""", unsafe_allow_html=True)
 
-# I am linking a Google Drive folder with sample lab reports
-st.markdown(
-    "<div style='text-align: center; padding: 8px;'>"
-    "📁 <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>"
-    "Click here to download sample lab reports (JPG) from Google Drive</a></div>",
-    unsafe_allow_html=True
-)
-
-# I am explaining how the app works in a collapsible section
-with st.expander("📘 How it works", expanded=False):
-    st.markdown("""
-    1. I am uploading one or more `.jpg` lab reports.
-    2. I am detecting fields like Test Name, Value, Units, and Reference Range using YOLO.
-    3. I am using EasyOCR to read the text from detected regions.
-    4. I am merging any fragmented test names intelligently.
-    5. I am allowing table preview, CSV download, and image overlay inspection.
-    """)
-
-# I am letting user upload one or more JPG files
+# I am allowing users to upload JPGs
 uploaded_files = st.file_uploader(
     "📤 Upload JPG lab reports", 
     type=["jpg"], 
@@ -174,7 +171,11 @@ uploaded_files = st.file_uploader(
     help="Only JPG format supported."
 )
 
-# I am processing each uploaded file individually
+# I am showing info if no file is uploaded
+if not uploaded_files:
+    st.markdown("<p style='text-align:center; color:gray;'>📂 Please upload one or more JPG files to begin.</p>", unsafe_allow_html=True)
+
+# I am processing each file when uploaded
 if uploaded_files:
     model = load_yolo_model()
     reader = easyocr.Reader(['en'], gpu=False)
@@ -197,7 +198,7 @@ if uploaded_files:
 
         st.success("✅ Extraction Complete!")
 
-        # I am showing the results in two columns: table and download
+        # I am showing results and CSV button
         col1, col2 = st.columns([2, 1])
         with col1:
             st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
@@ -211,11 +212,7 @@ if uploaded_files:
                 mime="text/csv"
             )
 
-        # I am letting user see the image with detected boxes
-        with st.expander("📦 View YOLO Detection Overlay", expanded=False):
-            boxed_image = draw_boxes(image.copy(), boxes, indices)
-            st.image(boxed_image, caption="Detected Fields", use_container_width=True)
-
-else:
-    # I am prompting user to upload file if nothing is selected
-    st.info("📂 Please upload one or more JPG files to begin.")
+        # I am directly displaying the image with bounding boxes (not collapsible anymore)
+        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
+        boxed_image = draw_boxes(image.copy(), boxes, indices)
+        st.image(boxed_image, use_container_width=True, caption="Detected Regions")
