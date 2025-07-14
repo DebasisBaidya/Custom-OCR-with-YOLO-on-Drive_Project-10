@@ -127,14 +127,14 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ✅ Centered heading
+# ✅ OCR Engine selection heading
 st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div>", unsafe_allow_html=True)
 
-# ✅ State for OCR Engine selection
+# ✅ Session state init
 if "ocr_engine" not in st.session_state:
     st.session_state.ocr_engine = "EasyOCR"
 
-# ✅ 3 columns for layout (center two buttons)
+# ✅ OCR Engine box-style buttons (center aligned)
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     c1, c2 = st.columns(2)
@@ -145,17 +145,28 @@ with col2:
         if st.button("Pytesseract", use_container_width=True):
             st.session_state.ocr_engine = "Pytesseract"
 
-# ✅ Show which OCR is selected (you can hide this line if not needed)
-st.markdown(f"<div style='text-align:center; color:gray;'>Selected: <b>{st.session_state.ocr_engine}</b></div>", unsafe_allow_html=True)
+    # ✅ Visual highlight of selected OCR engine
+    highlight_style = f"""
+        <style>
+            div[data-testid="column"] div:has(button:contains('{st.session_state.ocr_engine}')) > button {{
+                border: 2px solid #FF4B4B !important;
+                background-color: #ffecec !important;
+                border-radius: 6px;
+            }}
+        </style>
+    """
+    st.markdown(highlight_style, unsafe_allow_html=True)
 
-# ✅ Store in variable for downstream logic
+# ✅ Show selected OCR with line break
+st.markdown(f"<div style='text-align:center; color:gray;'>Selected: <b>{st.session_state.ocr_engine}</b><br></div>", unsafe_allow_html=True)
+
 ocr_engine = st.session_state.ocr_engine
 
-# ✅ Pytesseract warning
+# ✅ Pytesseract notice
 if ocr_engine == "Pytesseract":
     st.markdown("<div style='text-align:center; color:gray;'>⚠️ Requires Tesseract installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>", unsafe_allow_html=True)
 
-# ✅ Help section
+# ✅ Help Section
 with st.expander("📘 How it works"):
     st.markdown("""
     1. Upload `.jpg`, `.jpeg`, or `.png` lab reports.
@@ -165,11 +176,11 @@ with st.expander("📘 How it works"):
     5. Results are shown as table and image, and downloadable as CSV.
     """)
 
-# ✅ Upload instructions (centered)
+# ✅ Upload prompt
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# ✅ Run model and display results
+# ✅ Main processing block
 if uploaded_files:
     model = load_yolo_model()
 
