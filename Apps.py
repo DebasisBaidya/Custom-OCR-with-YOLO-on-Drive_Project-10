@@ -7,7 +7,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# Class mapping
+# Mapping class IDs to actual field names
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -15,15 +15,15 @@ class_map = {
     3: "Reference Range"
 }
 
-# Load YOLO ONNX model
+# Loading YOLOv5 model in ONNX format
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
-        st.error("❌ Model file 'best.onnx' not found.")
+        st.error("❌ Model file 'best.onnx' not found in the root directory.")
         st.stop()
     return cv2.dnn.readNetFromONNX(model_path)
 
-# Predict using YOLO
+# Performing YOLO prediction on the image
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -34,7 +34,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# Process YOLO predictions
+# Extracting boxes and class IDs from model output
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -58,7 +58,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# OCR text extraction
+# Running OCR over each detected region using chosen engine
 def extract_fields(image, boxes, indices, class_ids, ocr_engine):
     results = {key: [] for key in class_map.values()}
     for i in indices:
@@ -93,7 +93,7 @@ def extract_fields(image, boxes, indices, class_ids, ocr_engine):
 
     return pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
 
-# Merge test name fragments
+# Merging fragmented "Test Name" rows (e.g., "Total" + "Bilirubin")
 def merge_fragmented_test_names(df):
     rows = df.to_dict("records")
     merged_rows, buffer = [], None
@@ -109,21 +109,21 @@ def merge_fragmented_test_names(df):
         merged_rows.append(buffer)
     return pd.DataFrame(merged_rows)
 
-# Draw bounding boxes
+# Drawing green bounding boxes around detected regions
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# Streamlit config
+# Setting up Streamlit UI
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-# Title
+# Displaying app title and brief description
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;'>Upload JPG lab reports to extract medical data using YOLOv5 + OCR</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Upload JPG lab reports to extract medical test data using YOLOv5 + OCR</p>", unsafe_allow_html=True)
 
-# Drive Link
+# Providing Google Drive link for sample test reports
 st.markdown("""
 <div style='text-align:center;'>
 📥 Download sample Lab Reports (JPG) to test and upload from this:
@@ -131,13 +131,13 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Theme toggle (centered)
+# Center-aligned theme toggle
 st.markdown("<div style='text-align:center;'>🌗 <b>Choose Theme</b></div>", unsafe_allow_html=True)
 st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
 theme = st.radio("", ["Light", "Dark"], index=0, horizontal=True, label_visibility="collapsed")
 st.markdown("</div>", unsafe_allow_html=True)
 
-# How it works
+# Collapsible section to explain app functionality
 with st.expander("📘 How it works", expanded=False):
     st.markdown("""
     1. Upload `.jpg` lab reports  
@@ -146,23 +146,24 @@ with st.expander("📘 How it works", expanded=False):
     4. Table shown with download and image overlay  
     """)
 
-# OCR engine radio buttons (centered)
+# Center-aligned OCR Engine selection (radio, not dropdown)
 st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div>", unsafe_allow_html=True)
 st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
 ocr_engine = st.radio("", ["EasyOCR", "Pytesseract"], index=0, horizontal=True, label_visibility="collapsed")
 st.markdown("</div>", unsafe_allow_html=True)
 
+# Showing pytesseract install note
 if ocr_engine == "Pytesseract":
     st.markdown(
         "<div style='text-align:center; color:gray;'>⚠️ Tesseract must be installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>",
         unsafe_allow_html=True
     )
 
-# File uploader
+# Uploading JPG files section
 st.markdown("<div style='text-align:center;'>📤 <b>Upload JPG lab reports</b><br><span style='color:gray;'>📂 Please upload one or more JPG files to begin.</span></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader("", type=["jpg"], accept_multiple_files=True)
 
-# Handle uploaded files
+# Handling each uploaded file
 if uploaded_files:
     model = load_yolo_model()
 
@@ -182,18 +183,18 @@ if uploaded_files:
             df = extract_fields(image, boxes, indices, class_ids, ocr_engine)
             df = merge_fragmented_test_names(df)
 
+        # Showing extracted table
         st.success("✅ Extraction Complete!")
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
+        # Displaying annotated image
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         boxed_img = draw_boxes(image.copy(), boxes, indices)
         st.image(boxed_img, use_container_width=True, caption="Detected Regions")
 
-        # Download + Reset Button (centered together)
+        # Centered download + reset buttons
         col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            pass
         with col2:
             st.download_button(
                 label="⬇️ Download as CSV",
@@ -204,5 +205,3 @@ if uploaded_files:
             if st.button("🔄 Reset All"):
                 st.session_state.clear()
                 st.experimental_rerun()
-        with col3:
-            pass
