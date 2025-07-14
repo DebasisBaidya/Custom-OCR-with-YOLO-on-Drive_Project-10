@@ -21,6 +21,29 @@ class_map = {
 }
 
 # --------------------------------------------------
+# 🧠 I'm adding helpers to split mixed value‑unit strings
+# --------------------------------------------------
+# ✅ Regex: grabbing “13.5” and “g/dL” separately
+_unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([^\d\s]+.*)$", re.I)
+
+# ✅ Normalising common unit spellings / cases
+UNIT_NORMALISE = {
+    "g/dl":   "g/dL",
+    "mg/dl":  "mg/dL",
+    "mmol/l": "mmol/L",
+    "μiu/ml": "µIU/mL",
+}
+
+def _split_value_unit(txt: str):
+    """🔍 Returning clean (value, unit); blank unit if none found."""
+    m = _unit_rx.match(txt)
+    if not m:
+        return txt.strip(), ""          # nothing to split
+    val, unit = m.groups()
+    unit = UNIT_NORMALISE.get(unit.lower(), unit)  # fixing case / symbol
+    return val.strip(), unit.strip()
+
+# --------------------------------------------------
 # 🧠 I'm loading YOLOv5 ONNX model
 # --------------------------------------------------
 def load_yolo_model():
@@ -88,6 +111,7 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
+        # 🧹 Basic preprocessing to help EasyOCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -103,9 +127,21 @@ def extract_table_text(image, boxes, indices, class_ids):
 
         for line in lines:
             clean = line.strip()
-            if clean:
-                results[label].append(clean)
+            if not clean:
+                continue
 
+            # 🧠 NEW: splitting mixed value+unit strings on the fly
+            if label == "Value" and "Units" in results:
+                val, unit = _split_value_unit(clean)
+                results["Value"].append(val)
+                if unit:
+                    results["Units"].append(unit)
+                continue  # next OCR line
+
+            # 📌 Regular behaviour for all other cases
+            results[label].append(clean)
+
+    # 🧱 Padding columns so DataFrame aligns properly
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
@@ -218,5 +254,6 @@ if uploaded_files:
                 if st.button("🧹 Clear All"):
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
-                    # Change uploader key to force reset file uploader widget
+                    # Changing uploader key to force reset of widget
                     st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
+                    st.rerun()  # 🔁 Reloading the app
