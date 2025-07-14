@@ -127,16 +127,21 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ✅ OCR Selection (center-aligned block)
-st.markdown("""
-<div style='text-align:center;'>
-    <div><b>🧠 Select OCR Engine</b></div>
-</div>
-""", unsafe_allow_html=True)
+# ✅ Create a 3-column layout and use the center one
+col1, col2, col3 = st.columns([1, 3, 1])
 
-center_col = st.columns([1, 3, 1])[1]
-with center_col:
-    ocr_engine = st.radio("", ["EasyOCR", "Pytesseract"], index=0, horizontal=True, label_visibility="collapsed")
+with col2:
+    # 🧠 Heading centered above the radio buttons
+    st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div>", unsafe_allow_html=True)
+
+    # ✅ Centered radio buttons directly below heading
+    ocr_engine = st.radio(
+        label="Select OCR Engine",  # this label won't show due to collapsed visibility
+        options=["EasyOCR", "Pytesseract"],
+        index=0,
+        horizontal=True,
+        label_visibility="collapsed"  # hide label (heading shown above already)
+    )
 
 # ✅ Pytesseract warning
 if ocr_engine == "Pytesseract":
