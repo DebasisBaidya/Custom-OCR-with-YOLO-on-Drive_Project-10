@@ -3,8 +3,7 @@
 # --------------------------------------------------
 import os, cv2, re, numpy as np, pandas as pd, streamlit as st
 from PIL import Image
-import easyocr
-import random  # (I'm using this for generating a fresh key)
+import easyocr, random, datetime  # (I'm adding datetime to tag debug images)
 
 # --------------------------------------------------
 # 🧠 I'm defining the class mapping for YOLO labels
@@ -28,15 +27,15 @@ def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_side = max(h, w)
 
-    # I'm padding the image to a square canvas (top‑left anchored)
+    # I'm padding image to square (top‑left anchored)
     padded = np.zeros((max_side, max_side, 3), dtype=np.uint8)
     padded[:h, :w] = image
 
-    # I'm preparing the blob for YOLO
+    # I'm converting to a blob
     blob = cv2.dnn.blobFromImage(padded, 1 / 255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
-    return preds, padded  # (I’m returning padded so coordinates line up)
+    return preds, padded
 
 # --------------------------------------------------
 # 📦 I'm post‑processing YOLO predictions
@@ -65,47 +64,53 @@ def process_predictions(preds, padded_img, conf_thresh=0.4, score_thresh=0.25):
 # --------------------------------------------------
 # 🔡 I'm extracting exactly one line of text per field
 # --------------------------------------------------
-def extract_table_text(orig_img, boxes, idxs, class_ids):
+def extract_table_text(orig_img, boxes, idxs, class_ids, debug=False):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {v: [] for v in class_map.values()}
+    field_count = {v: 0 for v in class_map.values()}
 
     H, W = orig_img.shape[:2]
 
     for i in idxs:
         x, y, w, h = boxes[i]
+        label = class_map.get(class_ids[i], "Field")
+        field_count[label] += 1  # 🧮 I'm counting detections per class
 
-        # I'm clamping coordinates so crops stay inside the original image
+        # 🛡️ I'm clamping coordinates
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(W, x + w), min(H, y + h)
-        if x2 <= x1 or y2 <= y1:
+        crop_w, crop_h = x2 - x1, y2 - y1
+        if crop_w <= 0 or crop_h <= 0:
+            # I'm adding blank to keep row count consistent
+            results[label].append("")
+            if debug:
+                st.warning(f"⚠️ Skipping invalid crop for {label} (size {crop_w}×{crop_h})")
             continue
 
         crop = orig_img[y1:y2, x1:x2]
-        if crop.size == 0:
-            continue
 
-        # I'm enhancing the crop for better OCR accuracy
+        # 🧪 I'm preprocessing for OCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, bin_inv = cv2.threshold(
-            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
+        _, bin_inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(bin_inv)
 
-        # I'm reading text lines from the ROI
         try:
             lines = reader.readtext(roi, detail=0)
-        except Exception:
+        except Exception as e:
             lines = []
+            if debug:
+                st.error(f"❌ OCR failed for {label}: {e}")
 
-        label = class_map.get(class_ids[i], "Field")
-
-        # ✅ I'm keeping only the *first* non‑empty line => one value per box
+        # I'm using only the first valid line
         clean_lines = [ln.strip() for ln in lines if ln.strip()]
         results[label].append(clean_lines[0] if clean_lines else "")
 
-    # I'm padding shorter columns so DataFrame remains rectangular
+    # 🗒️ I'm summarising counts
+    st.info("📊 Detected count → " + ", ".join(f"{k}:{v}" for k, v in field_count.items()))
+
+    # 🧱 I'm padding rows
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
@@ -113,7 +118,7 @@ def extract_table_text(orig_img, boxes, idxs, class_ids):
     return pd.DataFrame(results)
 
 # --------------------------------------------------
-# 🖼️ I'm drawing boxes on the *original* (no black bars)
+# 🖼️ I'm drawing boxes on original for debug
 # --------------------------------------------------
 def draw_boxes_on_original(orig_img, boxes, idxs, class_ids):
     annotated = orig_img.copy()
@@ -121,7 +126,6 @@ def draw_boxes_on_original(orig_img, boxes, idxs, class_ids):
 
     for i in idxs:
         x, y, w, h = boxes[i]
-        # I'm clamping in case a box spills beyond the edge
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(W, x + w), min(H, y + h)
 
@@ -135,13 +139,15 @@ def draw_boxes_on_original(orig_img, boxes, idxs, class_ids):
             (0, 0, 255),
             2,
         )
-
     return annotated
 
 # --------------------------------------------------
 # 🎯 I'm building the Streamlit interface
 # --------------------------------------------------
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
+
+# I'm adding a sidebar toggle for debug mode
+debug_mode = st.sidebar.checkbox("🔧 Debug mode (show boxes & logs)", value=False)
 
 st.markdown(
     "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
@@ -168,7 +174,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# I'm setting or retrieving a unique uploader key from session_state
+# I'm managing uploader key for instant reset
 uploader_key = st.session_state.get("uploader_key", "file_uploader_0")
 files = st.file_uploader(
     " ",
@@ -178,51 +184,50 @@ files = st.file_uploader(
 )
 
 # --------------------------------------------------
-# 📑 I'm processing every uploaded image
+# 📑 I'm processing each uploaded image
 # --------------------------------------------------
 if files:
     model = load_yolo_model()
 
     for f in files:
-        st.markdown(
-            f"<h4 style='text-align:center;'>📄 Processing: {f.name}</h4>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"<h4 style='text-align:center;'>📄 Processing: {f.name}</h4>", unsafe_allow_html=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.spinner("🔍 Running YOLOv5 detection and OCR..."):
-                # I'm loading the original image
                 orig = np.array(Image.open(f).convert("RGB"))
 
-                # I'm predicting with YOLO
                 preds, padded = predict_yolo(model, orig)
-
-                # I'm post‑processing predictions
                 idxs, boxes, class_ids = process_predictions(preds, padded)
 
                 if not len(idxs):
                     st.warning("⚠️ No fields detected in this image.")
                     continue
 
-                # I'm extracting the text from original image (no black padding)
-                df = extract_table_text(orig, boxes, idxs, class_ids)
+                # 🖼️ I'm optionally showing debug boxes before OCR
+                if debug_mode:
+                    st.image(
+                        draw_boxes_on_original(orig, boxes, idxs, class_ids),
+                        caption="🔧 YOLO detections (debug)",
+                        use_container_width=True,
+                    )
 
-        # I'm showing the extraction results
+                df = extract_table_text(orig, boxes, idxs, class_ids, debug=debug_mode)
+
+        # 🧾 I'm displaying extracted table
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        # I'm displaying the annotated original image
+        # 🖼️ I'm always showing final annotated image (for reviewer)
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields</h5>", unsafe_allow_html=True)
         st.image(draw_boxes_on_original(orig, boxes, idxs, class_ids), use_container_width=True)
 
-        # I'm adding download & clear‑all buttons
+        # 📤 I'm adding download and clear buttons
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             col_dl, col_clr = st.columns(2)
 
-            # ✅ I'm giving the reviewer a CSV download
             with col_dl:
                 st.download_button(
                     "⬇️ Download CSV",
@@ -231,10 +236,7 @@ if files:
                     mime="text/csv",
                 )
 
-            # ✅ I'm resetting everything in one click
             with col_clr:
                 if st.button("🧹 Clear All"):
-                    # I'm generating a fresh uploader key
                     st.session_state["uploader_key"] = f"file_uploader_{random.randint(1_000_000, 9_999_999)}"
-                    # I'm forcing a rerun so the widget resets instantly
                     st.experimental_rerun()
