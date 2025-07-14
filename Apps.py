@@ -56,20 +56,24 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# 🔡 OCR Extraction
+# 🔡 OCR Extraction with Smart Units Correction
 def extract_fields(image, boxes, indices, class_ids):
     results = {key: [] for key in class_map.values()}
+
     for i in indices:
-        if i >= len(boxes) or i >= len(class_ids): continue
+        if i >= len(boxes) or i >= len(class_ids):
+            continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
-        if not label: continue
+        if not label:
+            continue
         crop = image[y:y+h, x:x+w]
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=3, fy=3)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(th)
+
         try:
             text = pytesseract.image_to_string(roi, config='--oem 3 --psm 6').strip()
         except:
@@ -77,21 +81,22 @@ def extract_fields(image, boxes, indices, class_ids):
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         results[label].extend(lines)
 
-    # ✅ Normalize column lengths
-    max_len = max(len(v) for v in results.values())
+    max_len = max((len(v) for v in results.values()), default=0)
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
     df = pd.DataFrame(results)
 
-    # ✅ Smart Unit Correction (safe)
-    df["Units"] = df["Units"].astype(str)
-    df["Reference Range"] = df["Reference Range"].astype(str)
-    unit_keywords = ["/", "IU", "ml", "g/", "%"]
-    for idx, val in df["Reference Range"].items():
-        if any(kw in val for kw in unit_keywords):
-            df.at[idx, "Units"] += ("; " + val if df.at[idx, "Units"] else val)
-            df.at[idx, "Reference Range"] = ""
+    # ✅ Smart Units Correction
+    smart_units = []
+    for val in df["Reference Range"]:
+        if any(x in val for x in ["/", "IU", "ml", "g/", "%"]):
+            smart_units.append(val)
+    df["Reference Range"] = df["Reference Range"].apply(lambda x: "" if x in smart_units else x)
+    if len(smart_units) > 0:
+        for i in range(len(df)):
+            if df.at[i, "Units"] == "":
+                df.at[i, "Units"] = smart_units.pop(0) if smart_units else df.at[i, "Units"]
 
     return df
 
@@ -122,6 +127,7 @@ if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
+
         with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
             image = np.array(Image.open(file).convert("RGB"))
             preds, input_img = predict_yolo(model, image)
@@ -139,12 +145,12 @@ if uploaded_files:
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            b1, b2 = st.columns(2)
-            with b1:
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            col_dl, col_rst = st.columns(2)
+            with col_dl:
                 st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
-            with b2:
+            with col_rst:
                 if st.button("🔄 Reset All"):
                     st.session_state.clear()
                     st.experimental_rerun()
