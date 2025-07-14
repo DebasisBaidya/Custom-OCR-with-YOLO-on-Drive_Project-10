@@ -3,7 +3,6 @@
 # --------------------------------------------------
 import os
 import cv2
-import re
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -22,31 +21,6 @@ class_map = {
 }
 
 # --------------------------------------------------
-# 🧠 I'm adding helpers to split mixed value‑unit strings
-# --------------------------------------------------
-# ✅ Regex: grabbing “13.5” and “g/dL” separately
-_unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([^\d\s]+.*)$", re.I)
-
-# ✅ Normalising common unit spellings / cases
-UNIT_NORMALISE = {
-    "g/dl": "g/dL",
-    "mg/dl": "mg/dL",
-    "mmol/l": "mmol/L",
-    "μiu/ml": "µIU/mL",
-}
-
-
-def _split_value_unit(txt: str):
-    """🔍 Returning clean (value, unit); blank unit if none found."""
-    m = _unit_rx.match(txt)
-    if not m:
-        return txt.strip(), ""  # nothing to split
-    val, unit = m.groups()
-    unit = UNIT_NORMALISE.get(unit.lower(), unit)  # fixing case / symbol
-    return val.strip(), unit.strip()
-
-
-# --------------------------------------------------
 # 🧠 I'm loading YOLOv5 ONNX model
 # --------------------------------------------------
 def load_yolo_model():
@@ -56,7 +30,6 @@ def load_yolo_model():
         st.stop()
     model = cv2.dnn.readNetFromONNX(model_path)
     return model
-
 
 # --------------------------------------------------
 # 📸 I'm running YOLOv5 detection on input image
@@ -72,7 +45,6 @@ def predict_yolo(model, image):
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
-
 
 # --------------------------------------------------
 # 📦 I'm post‑processing YOLO outputs
@@ -98,22 +70,22 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-
 # --------------------------------------------------
 # 🔡 I'm extracting OCR text for every detected field
+#     (simple: Value & Units taken exactly as OCR reads them)
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
-    """🧠 Running EasyOCR on each detected crop and returning a tidy DataFrame."""
+    """🧠 EasyOCR on each crop → tidy DataFrame, no extra unit logic."""
     reader = easyocr.Reader(["en"], gpu=False)
 
-    # ✅ Initialising storage for each column
+    # ✅ Empty columns ready
     results = {k: [] for k in ["Test Name", "Value", "Units", "Reference Range"]}
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
 
-        # 📦 Getting crop box & label
+        # 📦 Crop + label
         x, y, w, h = boxes[i]
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
@@ -121,10 +93,9 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # 🧠 Mapping class ID ➜ label via class_map
         label = class_map.get(class_ids[i], "Field")
 
-        # 🧹 Quick pre‑processing before OCR
+        # 🧹 Light pre‑processing
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -139,25 +110,15 @@ def extract_table_text(image, boxes, indices, class_ids):
 
         for line in lines:
             clean = line.strip()
-            if not clean:
-                continue
-
-            # 🧠 Splitting mixed value+unit strings on the fly
-            if label == "Value":
-                val, unit = _split_value_unit(clean)
-                results["Value"].append(val)
-                if unit:
-                    results["Units"].append(unit)
-            else:
+            if clean:
                 results[label].append(clean)
 
-    # 🧱 Padding so each column is equal length
+    # 🧱 Padding columns so table lines up
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
     return pd.DataFrame(results)
-
 
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
@@ -177,7 +138,6 @@ def draw_boxes(image, boxes, indices, class_ids):
             2,
         )
     return image
-
 
 # --------------------------------------------------
 # 🎯 I'm building the Streamlit app UI
@@ -246,7 +206,7 @@ if uploaded_files:
             "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
             unsafe_allow_html=True,
         )
-        st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
+        st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_column_width=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
