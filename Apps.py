@@ -144,11 +144,11 @@ def get_image_download_bytes(annotated_np):
 
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-query_params = st.experimental_get_query_params()
+query_params = st.query_params
 if "clear" in query_params:
     # 🧹 I am resetting the uploader when ?clear=true is present
     uploaded_files = None
-    st.experimental_set_query_params()  # I am clearing the query param after use
+    st.query_params.clear()  # I am clearing the query param after use
 else:
     uploaded_files = st.file_uploader(
         " ",
@@ -156,34 +156,21 @@ else:
         accept_multiple_files=True,
     )
 
-st.markdown(
-    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-    <div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: 
-    <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-    <div style='text-align:center; margin-bottom:0;'>
+st.markdown("""
+<div style='text-align:center;'>
+    <h2>🩺🧪 Lab Report OCR Extractor 🧾</h2>
+    📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this:
+    <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a><br><br>
     📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
     <small>📂 Please upload one or more lab report images to start extraction.</small>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+</div><br>
+""", unsafe_allow_html=True)
 
 clear_trigger = st.button("🧹 Clear All")
-
 if clear_trigger:
     # 🧹 I am triggering upload reset by setting URL query param
-    st.experimental_set_query_params(clear="true")
+    st.query_params.clear()
+    st.query_params.update({"clear": "true"})
     st.stop()
 
 if uploaded_files:
@@ -205,24 +192,14 @@ if uploaded_files:
                     continue
                 df = extract_table_text(image, boxes, indices, class_ids)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>✅ Extraction Complete!</h5>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
+        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        # 🖼️ I am showing annotated image and creating bytes for download
         annotated_img = draw_boxes(image.copy(), boxes, indices, class_ids)
         img_bytes = get_image_download_bytes(annotated_img)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(annotated_img, use_container_width=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
