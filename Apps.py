@@ -7,7 +7,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# 🧠 Class Mapping for detected fields
+# Class mapping for detected fields
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -15,53 +15,6 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Unit Normalization & Correction (Not used now, kept for reference)
-def normalize_unit(text):
-    text = text.lower().strip()
-    text = text.replace('p', 'µ').replace('u', 'µ').replace('q', 'g')
-    text = re.sub(r'[^a-z0-9/µ]', '', text)
-    return text
-
-unit_correction_map = {
-    "mdl": "mg/dl",
-    "mgdl": "mg/dl",
-    "ugci": "µg/dl",
-    "ugdl": "µg/dl",
-    "ug/dl": "µg/dl",
-    "ugl": "µg/l",
-    "ngdi": "ng/dl",
-    "ngci": "ng/dl",
-    "uiu/ml": "µIU/ml",
-    "ululav": "µIU/ml",
-    "uluv": "µIU/ml",
-    "ul/ml": "µIU/ml",
-    "uluuml": "µIU/ml",
-    "miu/ml": "mIU/ml",
-    "iu/ml": "IU/ml",
-    "uIU/ml": "µIU/ml",
-    "µiu/ml": "µIU/ml",
-    "µu/ml": "µIU/ml",
-    "uiuml": "µIU/ml",
-}
-
-def correct_unit(text):
-    norm = normalize_unit(text)
-
-    # Direct map
-    if norm in unit_correction_map:
-        return unit_correction_map[norm]
-
-    # Regex fallback
-    if re.match(r"µ?i{1,2}u/ml", norm): return "µIU/ml"
-    if re.match(r"mg/?dl", norm): return "mg/dl"
-    if re.match(r"µ?g/?dl", norm): return "µg/dl"
-    if re.match(r"ng/?dl", norm): return "ng/dl"
-    if re.match(r"µ?g/?l", norm): return "µg/L"
-    if re.match(r"iu/ml", norm): return "IU/ml"
-
-    return text
-
-# ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -70,7 +23,6 @@ def load_yolo_model():
     model = cv2.dnn.readNetFromONNX(model_path)
     return model
 
-# 🔍 Run YOLO prediction
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -81,7 +33,6 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# 📦 Process predictions
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -103,7 +54,6 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# 🔡 OCR + Table Extraction (No unit correction)
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
@@ -133,7 +83,6 @@ def extract_table_text(image, boxes, indices, class_ids):
         for line in lines:
             clean = line.strip()
             if clean:
-                # Just append raw OCR text, no corrections
                 results[label].append(clean)
 
     max_len = max(len(v) for v in results.values()) if results else 0
@@ -143,7 +92,6 @@ def extract_table_text(image, boxes, indices, class_ids):
     df = pd.DataFrame(results)
     return df
 
-# 🖼️ Draw bounding boxes on image
 def draw_boxes(image, boxes, indices, class_ids):
     for i in indices:
         x, y, w, h = boxes[i]
@@ -160,7 +108,6 @@ def draw_boxes(image, boxes, indices, class_ids):
         )
     return image
 
-# 🎯 Streamlit UI
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
 st.markdown("<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>", unsafe_allow_html=True)
@@ -185,12 +132,10 @@ if "extracted_dfs" not in st.session_state:
 if "uploader_key" not in st.session_state:
     st.session_state["uploader_key"] = "file_uploader"
 
-# File uploader with dynamic key to reset widget on clear
 uploaded_files = st.file_uploader(
     " ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key=st.session_state["uploader_key"]
 )
 
-# Update session state when new files uploaded
 if uploaded_files:
     st.session_state["uploaded_files"] = uploaded_files
     st.session_state["extracted_dfs"] = []
@@ -213,29 +158,39 @@ if st.session_state["uploaded_files"]:
                 df = extract_table_text(image, boxes, indices, class_ids)
                 st.session_state["extracted_dfs"].append((file.name, df))
 
-    # Display all extracted tables and images with boxes
+    # Show extracted tables and images with boxes
     for fname, df in st.session_state["extracted_dfs"]:
         st.markdown(f"<h5 style='text-align:center;'>✅ Extraction Complete for {fname}!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        # Find the corresponding image from uploaded files to draw boxes
+        # Draw boxes on image
         file_obj = next((f for f in st.session_state["uploaded_files"] if f.name == fname), None)
         if file_obj:
             image = np.array(Image.open(file_obj).convert("RGB"))
-            # We need to re-run detection to get boxes etc. for drawing (or save boxes in session state)
-            # For simplicity, run detection again here:
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
             img_with_boxes = draw_boxes(image.copy(), boxes, indices, class_ids)
             st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
             st.image(img_with_boxes, use_container_width=True)
 
-# Clear All button without rerun
-c1, c2, c3 = st.columns([1, 2, 1])
-with c2:
-    if st.button("🧹 Clear All"):
-        st.session_state["uploaded_files"] = []
-        st.session_state["extracted_dfs"] = []
-        # Change uploader key to force reset file uploader widget
-        st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
+    # Combine all extracted dataframes into one CSV for download
+    combined_df = pd.concat([df for _, df in st.session_state["extracted_dfs"]], ignore_index=True)
+
+    # Show Download CSV and Clear All buttons only if extraction done
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        csv = combined_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download as CSV",
+            data=csv,
+            file_name="extracted_lab_report.csv",
+            mime="text/csv",
+        )
+        if st.button("🧹 Clear All"):
+            st.session_state["uploaded_files"] = []
+            st.session_state["extracted_dfs"] = []
+            st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
+else:
+    # No extraction yet, so no Clear or Download buttons
+    pass
