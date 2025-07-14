@@ -53,7 +53,7 @@ def process_predictions(preds, image, conf_thresh=0.4, score_thresh=0.25):
     return indices.flatten(), boxes, class_ids
 
 # Group boxes by vertical center to form rows
-def group_boxes_by_rows(boxes, class_ids, threshold=15):
+def group_boxes_by_rows(boxes, class_ids, threshold=10):  # lowered threshold for better row separation
     rows = []
     for i, box in enumerate(boxes):
         x, y, w, h = box
@@ -70,16 +70,14 @@ def group_boxes_by_rows(boxes, class_ids, threshold=15):
     rows.sort(key=lambda r: r['center_y'])
     return rows
 
-# Initialize EasyOCR reader once
-reader = easyocr.Reader(['en'], gpu=False)  # Set gpu=True if you have CUDA
+# Initialize EasyOCR reader once (set gpu=True if CUDA available)
+reader = easyocr.Reader(['en'], gpu=False)
 
 # OCR text extraction from a single box using EasyOCR
 def ocr_text_from_box(image, box):
     x, y, w, h = box
     crop = image[y:y+h, x:x+w]
-    # Convert BGR to RGB for EasyOCR
     crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-    # Run EasyOCR on cropped image
     results = reader.readtext(crop_rgb, detail=0, paragraph=True)
     text = " ".join(results).strip()
     return text
@@ -89,7 +87,8 @@ def extract_rows(image, boxes, class_ids):
     rows = group_boxes_by_rows(boxes, class_ids)
     data_rows = []
     for row in rows:
-        sorted_boxes = sorted(row['boxes'], key=lambda b: b[1][0])  # sort left to right
+        # Sort boxes left to right within the row
+        sorted_boxes = sorted(row['boxes'], key=lambda b: b[1][0])
         row_data = {v: "" for v in ['Test Name', 'Value', 'Units', 'Reference Range']}
         for i, box, cid in sorted_boxes:
             text = ocr_text_from_box(image, box)
@@ -179,7 +178,7 @@ if st.session_state["uploaded_files"]:
             indices, boxes, class_ids = process_predictions(preds, input_img)
             img_with_boxes = draw_boxes(image.copy(), boxes, indices, class_ids)
             st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
-            st.image(img_with_boxes, use_column_width=True)
+            st.image(img_with_boxes, use_container_width=True)
 
     combined_df = pd.concat([df for _, df in st.session_state["extracted_dfs"]], ignore_index=True)
 
