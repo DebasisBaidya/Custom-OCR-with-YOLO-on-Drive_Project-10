@@ -133,11 +133,14 @@ if "clear" in st.query_params:
 uploader_placeholder = st.empty()
 
 # 📂 I am reading uploaded files (if any)
-uploaded_files = uploader_placeholder.file_uploader(
-    "📤 Upload lab reports (.jpg, .jpeg, or .png)",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True,
-)
+st.markdown("""
+<div style='text-align:center; margin-bottom:0;'>
+📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
+<small>📂 Please upload one or more lab report images to start extraction.</small>
+</div>
+""", unsafe_allow_html=True)
+
+uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="uploaded_files")
 
 if uploaded_files:
     model = load_yolo_model()
