@@ -2,17 +2,19 @@ import os
 import cv2
 import numpy as np
 import pandas as pd
-import pytesseract
 import streamlit as st
 from PIL import Image
 import easyocr
 
-# ✅ Mapping YOLOv5 class index
+# 🧠 Mapping YOLOv5 class index to readable field names
 class_map = {
-    0: "Test Name", 1: "Value", 2: "Units", 3: "Reference Range"
+    0: "Test Name",
+    1: "Value",
+    2: "Units",
+    3: "Reference Range"
 }
 
-# ✅ Load YOLO ONNX model
+# 🔁 Load the ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -23,7 +25,7 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# ✅ Run prediction
+# 🧠 Perform YOLO detection
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -34,7 +36,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# ✅ Process prediction output
+# 🔍 Process YOLO predictions
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -56,11 +58,12 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ OCR extraction
-def extract_fields(image, boxes, indices, class_ids, ocr_engine):
+# ✍️ OCR extraction using EasyOCR
+def extract_fields(image, boxes, indices, class_ids):
+    reader = easyocr.Reader(['en'], gpu=False)
     results = {key: [] for key in class_map.values()}
     for i in indices:
-        if i >= len(boxes): continue
+        if i >= len(boxes) or i >= len(class_ids): continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
         if not label: continue
@@ -70,22 +73,20 @@ def extract_fields(image, boxes, indices, class_ids, ocr_engine):
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(binary)
+
         try:
-            if ocr_engine == "EasyOCR":
-                reader = easyocr.Reader(['en'], gpu=False)
-                lines = reader.readtext(roi, detail=0)
-            else:
-                pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-                lines = pytesseract.image_to_string(roi).splitlines()
+            lines = reader.readtext(roi, detail=0)
         except:
             lines = []
+
         for line in lines:
             clean = line.strip()
             if clean:
                 results[label].append(clean)
+
     return pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
 
-# ✅ Merge fragmented Test Names
+# 🧾 Merge fragmented test names
 def merge_fragmented_test_names(df):
     rows = df.to_dict("records")
     merged_rows, buffer = [], None
@@ -101,73 +102,35 @@ def merge_fragmented_test_names(df):
         merged_rows.append(buffer)
     return pd.DataFrame(merged_rows)
 
-# ✅ Draw boxes
+# 🔲 Draw bounding boxes
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ STREAMLIT UI Starts
+# 🎯 Streamlit UI
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
-st.markdown("<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b>: <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>", unsafe_allow_html=True)
+st.markdown(
+    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b>: "
+    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
+    unsafe_allow_html=True
+)
 
-# ✅ OCR Engine Toggle with Style
-if "ocr_engine" not in st.session_state:
-    st.session_state.ocr_engine = "EasyOCR"
+st.markdown("<div style='text-align:center;'>🧠 <b>OCR Engine: EasyOCR (Default)</b></div><br>", unsafe_allow_html=True)
 
-st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div><br>", unsafe_allow_html=True)
-col1, col2, col3 = st.columns([1.5, 3, 1.5])
-with col2:
-    col_easy, col_py = st.columns(2)
-    with col_easy:
-        if st.button("EasyOCR", key="easy_btn", use_container_width=True):
-            st.session_state.ocr_engine = "EasyOCR"
-    with col_py:
-        if st.button("Pytesseract", key="pytess_btn", use_container_width=True):
-            st.session_state.ocr_engine = "Pytesseract"
-
-# ✅ CSS Styling for Toggle Highlight
-highlight_css = f"""
-<style>
-div[data-testid="column"] button {{
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-weight: bold;
-    border: 1px solid #ccc;
-    background-color: white;
-    color: black;
-}}
-
-div[data-testid="column"] button:has(span:contains("{st.session_state.ocr_engine}")) {{
-    background-color: #ffcccc;
-    color: black;
-    border: 2px solid #d33;
-}}
-</style>
-"""
-st.markdown(highlight_css, unsafe_allow_html=True)
-
-st.markdown(f"<div style='text-align:center;'>Selected OCR Engine: <span style='color:red; font-weight:bold;'>{st.session_state.ocr_engine}</span></div><br>", unsafe_allow_html=True)
-
-if st.session_state.ocr_engine == "Pytesseract":
-    st.markdown("<div style='text-align:center; color:gray;'>⚠️ Requires Tesseract installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>", unsafe_allow_html=True)
-
-# ✅ How It Works
 with st.expander("📘 How it works"):
     st.markdown("""
     1. Upload `.jpg`, `.jpeg`, or `.png` lab reports.
     2. YOLOv5 detects fields: Test Name, Value, Units, Reference Range.
-    3. OCR (EasyOCR / Pytesseract) extracts text from fields.
+    3. EasyOCR extracts text from fields.
     4. Table and annotated image displayed.
     """)
 
-# ✅ Upload UI
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# ✅ Processing logic
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
@@ -180,7 +143,7 @@ if uploaded_files:
             if len(indices) == 0:
                 st.warning("⚠️ No fields detected in this image.")
                 continue
-            df = extract_fields(image, boxes, indices, class_ids, st.session_state.ocr_engine)
+            df = extract_fields(image, boxes, indices, class_ids)
             df = merge_fragmented_test_names(df)
 
         st.success("✅ Extraction Complete!")
