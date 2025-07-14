@@ -200,3 +200,53 @@ if uploaded_files:
             if st.button("🔄 Reset All"):
                 st.session_state.clear()
                 st.experimental_rerun()
+
+    # 👉 I am showing help info on click
+    with st.expander("📘 How it works"):
+        st.markdown("""
+        1. Upload `.jpg`, `.jpeg`, or `.png` lab reports.
+        2. YOLOv5 detects fields: Test Name, Value, Units, Reference Range.
+        3. OCR (EasyOCR / Pytesseract) extracts text from detected fields.
+        4. Fragmented test names are merged intelligently.
+        5. Table and image are shown, with CSV download.
+        """)
+
+    # 👉 I am placing the uploader
+    st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
+    uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+
+    # 👉 I am processing each file
+    if uploaded_files:
+        model = load_yolo_model()
+
+        for file in uploaded_files:
+            st.markdown(f"---\n### 📄 Processing File: `{file.name}`")
+            image = np.array(Image.open(file).convert("RGB"))
+
+            with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
+                st.markdown("<div style='text-align:center;'>🔍 Running YOLOv5 Detection and OCR...</div>", unsafe_allow_html=True)
+                preds, input_img = predict_yolo(model, image)
+                indices, boxes, class_ids = process_predictions(preds, input_img)
+
+                if len(indices) == 0:
+                    st.warning("⚠️ No fields detected in this image.")
+                    continue
+
+                df = extract_fields(image, boxes, indices, class_ids, st.session_state.ocr_engine)
+                df = merge_fragmented_test_names(df)
+
+            # 👉 I am showing table and detection image
+            st.success("✅ Extraction Complete!")
+            st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
+            st.dataframe(df, use_container_width=True)
+
+            st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
+            st.image(draw_boxes(image.copy(), boxes, indices), use_container_width=True)
+
+            # 👉 I am placing the download and reset buttons
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
+                if st.button("🔄 Reset All"):
+                    st.session_state.clear()
+                    st.experimental_rerun()
