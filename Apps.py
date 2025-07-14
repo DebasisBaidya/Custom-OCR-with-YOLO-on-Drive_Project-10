@@ -7,7 +7,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# 🧠 Class Mapping for detected fields (used only for labeling boxes)
+# Mapping detected class IDs to field names
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -25,22 +25,29 @@ def normalize_unit_text(text):
 
 def extract_units_from_texts(texts):
     """
-    Given a list of text strings, extract all unit-like substrings using regex,
-    normalize them, and return a deduplicated sorted list.
+    Extract unit-like substrings from all OCR text lines,
+    count their occurrences, and return sorted list with confidence %.
     """
     unit_pattern = re.compile(
         r"(µ?m?iu/ml|mg/dl|ng/dl|µg/dl|µg/l|mg/l|ng/ml|mg/ml|iu/ml|miu/ml|µiu/ml|µg|mg|ng|ml|l|dl)",
         re.IGNORECASE,
     )
-    found_units = set()
+    freq = {}
+    total_lines = len(texts) if texts else 1
     for text in texts:
         matches = unit_pattern.findall(text)
         for match in matches:
             normalized = normalize_unit_text(match)
-            found_units.add(normalized)
-    return sorted(found_units)
+            freq[normalized] = freq.get(normalized, 0) + 1
 
-# ✅ Load YOLOv5 ONNX model
+    units_confidence = []
+    for unit, count in freq.items():
+        confidence = (count / total_lines) * 100
+        units_confidence.append((unit, confidence))
+    units_confidence.sort(key=lambda x: x[1], reverse=True)
+    return units_confidence
+
+# Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -49,7 +56,7 @@ def load_yolo_model():
     model = cv2.dnn.readNetFromONNX(model_path)
     return model
 
-# 🔍 Run YOLO prediction
+# Run YOLO prediction
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -60,7 +67,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# 📦 Process predictions
+# Process predictions and apply NMS
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -82,7 +89,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# 🔡 OCR + Table Extraction WITHOUT unit classification
+# Extract OCR text for each detected box, build table, and collect all OCR texts
 def extract_table_and_all_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
@@ -93,7 +100,6 @@ def extract_table_and_all_text(image, boxes, indices, class_ids):
             continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
-        # Safe crop with boundary check
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y1:y2, x1:x2]
@@ -111,6 +117,7 @@ def extract_table_and_all_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
+        # Append all OCR lines to results[label] and all_ocr_texts
         for line in lines:
             clean = line.strip()
             if clean:
@@ -124,7 +131,7 @@ def extract_table_and_all_text(image, boxes, indices, class_ids):
     df = pd.DataFrame(results)
     return df, all_ocr_texts
 
-# 🖼️ Draw bounding boxes on image
+# Draw bounding boxes on image with labels
 def draw_boxes(image, boxes, indices, class_ids):
     for i in indices:
         x, y, w, h = boxes[i]
@@ -141,10 +148,10 @@ def draw_boxes(image, boxes, indices, class_ids):
         )
     return image
 
-# 🎯 Streamlit UI
-st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
+# Streamlit UI
+st.set_page_config(page_title="Lab Report OCR - No Unit Classification", layout="centered", page_icon="🧾")
 
-st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor (No Unit Classification)</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR - Extract Table & Units (No Unit Classification)</h2>", unsafe_allow_html=True)
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
@@ -158,34 +165,33 @@ if uploaded_files:
     for file in uploaded_files:
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
 
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c2:
-            with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
-                image = np.array(Image.open(file).convert("RGB"))
-                preds, input_img = predict_yolo(model, image)
-                indices, boxes, class_ids = process_predictions(preds, input_img)
-                if len(indices) == 0:
-                    st.warning("⚠️ No fields detected in this image.")
-                    continue
-                df, all_ocr_texts = extract_table_and_all_text(image, boxes, indices, class_ids)
+        with st.spinner("🔍 Running YOLO Detection and OCR..."):
+            image = np.array(Image.open(file).convert("RGB"))
+            preds, input_img = predict_yolo(model, image)
+            indices, boxes, class_ids = process_predictions(preds, input_img)
+            if len(indices) == 0:
+                st.warning("⚠️ No fields detected in this image.")
+                continue
+            df, all_ocr_texts = extract_table_and_all_text(image, boxes, indices, class_ids)
 
-                # Extract units from all OCR texts (no classification)
-                units_found = extract_units_from_texts(all_ocr_texts)
+            # Extract best-effort units from all OCR text combined (no classification)
+            units_confidence = extract_units_from_texts(all_ocr_texts)
 
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
-        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
+        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table (Units column is raw OCR text)</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        st.markdown("<h5 style='text-align:center;'>🔎 Detected Units (from all OCR text)</h5>", unsafe_allow_html=True)
-        if units_found:
-            st.markdown(", ".join(units_found))
+        st.markdown("<h5 style='text-align:center;'>🔎 Best-Effort Extracted Units with Confidence (%)</h5>", unsafe_allow_html=True)
+        if units_confidence:
+            for unit, conf in units_confidence:
+                st.markdown(f"**{unit}** — {conf:.1f}%")
         else:
             st.markdown("No units detected.")
 
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
-        c1, c2, c3 = st.columns([1, 2, 1])
+        c1, c2 = st.columns([1, 2])
         with c2:
             col_dl, col_rst = st.columns(2)
             with col_dl:
