@@ -25,7 +25,7 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# 🧠 Perform YOLO detection
+# 📦 Run YOLO inference
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -36,7 +36,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# 🔍 Process YOLO predictions
+# 📊 Postprocess predictions
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -58,12 +58,13 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✍️ OCR extraction using EasyOCR
+# ✍️ Extract text from each region using EasyOCR
 def extract_fields(image, boxes, indices, class_ids):
-    reader = easyocr.Reader(['en'], gpu=False)
     results = {key: [] for key in class_map.values()}
+    reader = easyocr.Reader(['en'], gpu=False)
+
     for i in indices:
-        if i >= len(boxes) or i >= len(class_ids): continue
+        if i >= len(boxes): continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
         if not label: continue
@@ -86,7 +87,7 @@ def extract_fields(image, boxes, indices, class_ids):
 
     return pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
 
-# 🧾 Merge fragmented test names
+# 🔄 Merge fragmented rows
 def merge_fragmented_test_names(df):
     rows = df.to_dict("records")
     merged_rows, buffer = [], None
@@ -102,32 +103,32 @@ def merge_fragmented_test_names(df):
         merged_rows.append(buffer)
     return pd.DataFrame(merged_rows)
 
-# 🔲 Draw bounding boxes
+# 🔲 Draw boxes
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# 🎯 Streamlit UI
+# 🎯 Streamlit App
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
+
 st.markdown(
-    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b>: "
+    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True
 )
-
-st.markdown("<div style='text-align:center;'>🧠 <b>OCR Engine: EasyOCR (Default)</b></div><br>", unsafe_allow_html=True)
 
 with st.expander("📘 How it works"):
     st.markdown("""
     1. Upload `.jpg`, `.jpeg`, or `.png` lab reports.
     2. YOLOv5 detects fields: Test Name, Value, Units, Reference Range.
-    3. EasyOCR extracts text from fields.
-    4. Table and annotated image displayed.
+    3. EasyOCR extracts text from detected regions.
+    4. Table and annotated image are displayed.
     """)
 
+# 📤 Upload
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
