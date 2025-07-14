@@ -14,10 +14,10 @@ import easyocr
 # 🧠 I'm defining class‑ID ➜ field mapping
 # --------------------------------------------------
 CLASS_MAP = {
-    61: "Test Name",
-    14: "Value",
-    26: "Units",
-    41: "Reference Range",
+    0: "Test Name",
+    1: "Value",
+    2: "Units",
+    3: "Reference Range",
 }
 
 # --------------------------------------------------
