@@ -12,7 +12,7 @@ class_map = {
     0: "Test Name",
     1: "Value",
     2: "Units",
-    3: "Reference Range"
+    3: "Reference Range",
 }
 
 # ✅ I am loading the YOLOv5 ONNX model
@@ -47,7 +47,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
         conf = det[4]
         if conf > conf_thresh:
             scores = det[5:]
-            class_id = np.argmax(scores)
+            class_id = int(np.argmax(scores))
             if scores[class_id] > score_thresh:
                 cx, cy, bw, bh = det[:4]
                 x = int((cx - bw / 2) * x_factor)
@@ -58,37 +58,74 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# 🔡 I am extracting text and confidence using EasyOCR
+# 🧰 I am preparing advanced preprocessing to handle hazy / low‑quality crops
+
+def preprocess_for_ocr(crop):
+    # 👉 I am converting to grayscale
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    # 👉 I am denoising with Non‑Local Means so noise gets reduced while details stay
+    gray = cv2.fastNlMeansDenoising(gray, None, h=30, templateWindowSize=7, searchWindowSize=21)
+    # 👉 I am applying CLAHE to boost local contrast
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+    # 👉 I am sharpening the image with an unsharp mask
+    blur = cv2.GaussianBlur(gray, (0, 0), 3)
+    sharpen = cv2.addWeighted(gray, 1.5, blur, -0.5, 0)
+    # 👉 I am thresholding adaptively for uneven lighting
+    bin_img = cv2.adaptiveThreshold(
+        sharpen,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        10,
+    )
+    # 👉 I am inverting so text stays black for EasyOCR preference
+    return cv2.bitwise_not(bin_img)
+
+# 🔡 I am extracting text and confidence using EasyOCR with robust preprocessing
 
 def extract_table_text(image, boxes, indices, class_ids):
+    # 👉 I am creating the reader once for speed
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
     results["Confidence"] = []
+
     for i in indices:
-        if i >= len(boxes):
-            continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
-        crop = image[max(0, y):y + h, max(0, x):x + w]
+        crop = image[max(0, y) : y + h, max(0, x) : x + w]
         if crop.size == 0:
             continue
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        roi = cv2.bitwise_not(binary)
+
+        # 👉 I am applying the advanced preprocessing pipeline
+        roi = preprocess_for_ocr(crop)
+
+        # 👉 I am running EasyOCR with detail to fetch confidence
         try:
-            for bbox, text, conf in reader.readtext(roi):
-                clean = text.strip()
-                if clean:
-                    results[label].append(clean)
-                    results["Confidence"].append(round(conf * 100, 2))
+            ocr_results = reader.readtext(roi, detail=1, paragraph=False, decoder="beamsearch")
         except Exception:
-            pass
+            ocr_results = []
+
+        # 👉 I am falling back to original crop if processed ROI gives nothing
+        if len(ocr_results) == 0:
+            try:
+                ocr_results = reader.readtext(crop, detail=1, paragraph=False, decoder="beamsearch")
+            except Exception:
+                ocr_results = []
+
+        for (_bbox, text, conf) in ocr_results:
+            clean = text.strip()
+            if clean:
+                results[label].append(clean)
+                results["Confidence"].append(round(conf * 100, 2))
+
+    # 👉 I am normalising column lengths
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
-        pad_val = 0.0 if k == "Confidence" else ""
-        results[k] += [pad_val] * (max_len - len(results[k]))
+        default_val = 0.0 if k == "Confidence" else ""
+        results[k] += [default_val] * (max_len - len(results[k]))
+
     return pd.DataFrame(results)
 
 # 🖼️ I am drawing bounding boxes and labels on the image
@@ -98,7 +135,15 @@ def draw_boxes(image, boxes, indices, class_ids):
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(image, label, (x, y - 10 if y - 10 > 10 else y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(
+            image,
+            label,
+            (x, y - 10 if y - 10 > 10 else y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            2,
+        )
     return image
 
 # 💾 I am converting numpy image to bytes so user can download it
@@ -133,14 +178,11 @@ if "clear" in st.query_params:
 uploader_placeholder = st.empty()
 
 # 📂 I am reading uploaded files (if any)
-st.markdown("""
-<div style='text-align:center; margin-bottom:0;'>
-📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
-<small>📂 Please upload one or more lab report images to start extraction.</small>
-</div>
-""", unsafe_allow_html=True)
-
-uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="uploaded_files")
+uploaded_files = uploader_placeholder.file_uploader(
+    "📤 Upload lab reports (.jpg, .jpeg, or .png)",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+)
 
 if uploaded_files:
     model = load_yolo_model()
@@ -168,11 +210,22 @@ if uploaded_files:
         with center:
             col_csv, col_img, col_clr = st.columns(3)
             with col_csv:
-                st.download_button("⬇️ CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv", key=f"csv_{idx}")
+                st.download_button(
+                    "⬇️ CSV",
+                    df.to_csv(index=False),
+                    file_name=f"{file.name}_ocr.csv",
+                    mime="text/csv",
+                    key=f"csv_{idx}",
+                )
             with col_img:
-                st.download_button("🖼️ Annotated", img_bytes, file_name=f"{file.name}_annotated.png", mime="image/png", key=f"img_{idx}")
+                st.download_button(
+                    "🖼️ Annotated",
+                    img_bytes,
+                    file_name=f"{file.name}_annotated.png",
+                    mime="image/png",
+                    key=f"img_{idx}",
+                )
             with col_clr:
                 if st.button("🧹 Clear", key=f"clear_{idx}"):
                     st.query_params.update({"clear": "true"})
                     st.stop()
-
