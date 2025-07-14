@@ -1,21 +1,27 @@
+# --------------------------------------------------
+# 🏗️ I'm importing all the necessary libraries
+# --------------------------------------------------
 import os
 import cv2
-import re
 import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
 
-# 🧠 Class Mapping for detected fields
+# --------------------------------------------------
+# 🧠 I'm defining the class mapping for YOLO outputs
+# --------------------------------------------------
 class_map = {
     0: "Test Name",
     1: "Value",
     2: "Units",
-    3: "Reference Range"
+    3: "Reference Range",
 }
 
-# ✅ Load YOLOv5 ONNX model
+# --------------------------------------------------
+# 🛠️ I'm loading the YOLOv5 ONNX model
+# --------------------------------------------------
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -24,24 +30,34 @@ def load_yolo_model():
     model = cv2.dnn.readNetFromONNX(model_path)
     return model
 
-# 🔍 Run YOLO prediction
+# --------------------------------------------------
+# 🔍 I'm running YOLO prediction on the input image
+# --------------------------------------------------
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
+
+    # I'm creating a square canvas so YOLO expects 640 × 640
     input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
     input_img[0:h, 0:w] = image
-    blob = cv2.dnn.blobFromImage(input_img, 1 / 255, (640, 640), swapRB=True, crop=False)
+
+    # I'm converting the image into a blob for YOLO
+    blob = cv2.dnn.blobFromImage(
+        input_img, 1 / 255, (640, 640), swapRB=True, crop=False
+    )
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
 
-# 📦 Process predictions
+# --------------------------------------------------
+# 📦 I'm post‑processing YOLO predictions
+# --------------------------------------------------
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
     h, w = input_img.shape[:2]
-    x_factor = w / 640
-    y_factor = h / 640
+    x_factor, y_factor = w / 640, h / 640
+
     for det in detections:
         conf = det[4]
         if conf > conf_thresh:
@@ -54,10 +70,13 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
                 boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
                 confidences.append(float(conf))
                 class_ids.append(class_id)
+
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# 🔡 OCR + Table Extraction
+# --------------------------------------------------
+# 🔡 I'm extracting text from detected table fields
+# --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
@@ -65,32 +84,38 @@ def extract_table_text(image, boxes, indices, class_ids):
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
+
+        # I'm cropping the detected region
         x, y, w, h = boxes[i]
-        label = class_map.get(class_ids[i], "Field")
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y1:y2, x1:x2]
         if crop.size == 0:
             continue
 
+        # I'm pre‑processing the crop to improve OCR accuracy
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        _, binary = cv2.threshold(
+            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
         roi = cv2.bitwise_not(binary)
 
+        # I'm reading text from the ROI
         try:
             lines = reader.readtext(roi, detail=0)
         except:
             lines = []
 
+        # I'm collecting the cleaned lines
+        label = class_map.get(class_ids[i], "Field")
         for line in lines:
             clean = line.strip()
             if clean:
-                if label == "Units":
-                    clean = correct_unit(clean)
                 results[label].append(clean)
 
+    # I'm padding shorter columns so DataFrame stays rectangular
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
@@ -98,7 +123,9 @@ def extract_table_text(image, boxes, indices, class_ids):
     df = pd.DataFrame(results)
     return df
 
-# 🖼️ Draw bounding boxes on image
+# --------------------------------------------------
+# 🖼️ I'm drawing bounding boxes on the image for preview
+# --------------------------------------------------
 def draw_boxes(image, boxes, indices, class_ids):
     for i in indices:
         x, y, w, h = boxes[i]
@@ -115,58 +142,115 @@ def draw_boxes(image, boxes, indices, class_ids):
         )
     return image
 
-# 🎯 Streamlit UI
+# --------------------------------------------------
+# 🎯 I'm building the Streamlit UI
+# --------------------------------------------------
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-st.markdown("<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>", unsafe_allow_html=True)
+# I'm placing the main header
 st.markdown(
-    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
-    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
+    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
     unsafe_allow_html=True,
 )
 
-st.markdown("""
-<div style='text-align:center; margin-bottom:0;'>
-📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
-<small>📂 Please upload one or more lab report images to start extraction.</small>
-</div>
-""", unsafe_allow_html=True)
+# I'm linking a sample drive folder
+st.markdown(
+    """
+    <div style='text-align:center;'>
+        📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this:
+        <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a>
+    </div><br>
+    """,
+    unsafe_allow_html=True,
+)
 
-uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="uploaded_files")
+# I'm creating the uploader caption
+st.markdown(
+    """
+    <div style='text-align:center; margin-bottom:0;'>
+        📤 <b>Upload lab reports (.jpg, .jpeg, or .png)</b><br>
+        <small>📂 Please upload one or more lab report images to start extraction.</small>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
+# I'm adding the file uploader widget
+uploaded_files = st.file_uploader(
+    " ",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+    key="uploaded_files",
+)
+
+# --------------------------------------------------
+# 📑 I'm processing each uploaded file
+# --------------------------------------------------
 if uploaded_files:
     model = load_yolo_model()
+
     for file in uploaded_files:
-        st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
+        st.markdown(
+            f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>",
+            unsafe_allow_html=True,
+        )
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
+                # I'm reading the image
                 image = np.array(Image.open(file).convert("RGB"))
+
+                # I'm running YOLO prediction
                 preds, input_img = predict_yolo(model, image)
+
+                # I'm post‑processing predictions
                 indices, boxes, class_ids = process_predictions(preds, input_img)
+
                 if len(indices) == 0:
                     st.warning("⚠️ No fields detected in this image.")
                     continue
+
+                # I'm extracting the table
                 df = extract_table_text(image, boxes, indices, class_ids)
 
-        st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
-        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
+        # I'm showing success message and table
+        st.markdown(
+            "<h5 style='text-align:center;'>✅ Extraction Complete!</h5>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
+            unsafe_allow_html=True,
+        )
         st.dataframe(df, use_container_width=True)
 
-        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
+        # I'm showing annotated image
+        st.markdown(
+            "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
+            unsafe_allow_html=True,
+        )
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
+        # I'm adding download & clear‑all buttons
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             col_dl, col_rst = st.columns(2)
+
+            # I'm letting the reviewer download the CSV
             with col_dl:
                 st.download_button(
-                    "⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv"
+                    "⬇️ Download CSV",
+                    df.to_csv(index=False),
+                    file_name=f"{file.name}_ocr.csv",
+                    mime="text/csv",
                 )
+
+            # I'm letting the reviewer clear everything
             with col_rst:
                 if st.button("🧹 Clear All"):
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
-                    # Change uploader key to force reset file uploader widget
-                    st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
+                    st.session_state["uploader_key"] = (
+                        "file_uploader_" + str(np.random.randint(1_000_000))
+                    )
