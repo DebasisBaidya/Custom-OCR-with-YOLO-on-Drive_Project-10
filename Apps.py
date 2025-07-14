@@ -164,7 +164,7 @@ def draw_boxes(image, boxes, indices, class_ids):
 # 🎯 Streamlit UI
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor (Optimized for Accuracy)</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>", unsafe_allow_html=True)
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
