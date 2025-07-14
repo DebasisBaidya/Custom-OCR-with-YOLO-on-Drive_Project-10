@@ -15,6 +15,40 @@ class_map = {
     3: "Reference Range"
 }
 
+# ✅ Unit Normalization Map
+def normalize_unit(text):
+    text = text.lower().strip()
+    text = text.replace('p', 'µ').replace('u', 'µ').replace('q', 'g')
+    text = re.sub(r'[^a-z0-9/µ]', '', text)
+    return text
+
+unit_correction_map = {
+    "mdl": "mg/dl",
+    "mgdl": "mg/dl",
+    "ugci": "µg/dl",
+    "ugdl": "µg/dl",
+    "ug/dl": "µg/dl",
+    "ugl": "µg/l",
+    "ngdi": "ng/dl",
+    "ngci": "ng/dl",
+    "uiu/ml": "µIU/ml",
+    "ululav": "µIU/ml",
+    "uluv": "µIU/ml",
+    "ul/ml": "µIU/ml",
+    "ulU/ml": "µIU/ml",
+    "miu/ml": "mIU/ml",
+    "iu/ml": "IU/ml",
+    "uIU/ml": "µIU/ml",
+    "µiu/ml": "µIU/ml",
+    "µu/ml": "µIU/ml",
+    "uiuml": "µIU/ml",
+    "uluuml": "µIU/ml"
+}
+
+def correct_unit(text):
+    norm = normalize_unit(text)
+    return unit_correction_map.get(norm, text)
+
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
@@ -88,6 +122,8 @@ def extract_table_text(image, boxes, indices, class_ids):
         for line in lines:
             clean = line.strip()
             if clean:
+                if label == "Units":
+                    clean = correct_unit(clean)
                 results[label].append(clean)
 
     max_len = max(len(v) for v in results.values()) if results else 0
@@ -164,6 +200,5 @@ if uploaded_files:
                     "⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv"
                 )
             with col_rst:
-                if st.button("🔄 Reset All"):
+                if st.button("🧹 Clear All"):
                     st.session_state.clear()
-                    st.experimental_rerun()
