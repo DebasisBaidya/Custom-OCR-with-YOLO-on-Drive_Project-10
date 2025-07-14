@@ -15,26 +15,31 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Expanded and robust unit correction map with common OCR misreads
+# ✅ Smart Unit Correction Map
 unit_correction_map = {
-    "mgdl": "mg/dl",
-    "mg/dl": "mg/dl",
-    "ngdl": "ng/dl",
-    "µgdl": "µg/dl",
-    "µg/dl": "µg/dl",
-    "pqdl": "µg/dl",      # OCR 'p' instead of 'µ', 'q' instead of 'g'
+    "Mdl": "mg/dl",
+    "mdl": "mg/dl",
+    "ulUlav": "µIU/ml",
+    "uIU/ml": "µIU/ml",
+    "ugci": "µg/dl",
+    "ngdi": "ng/dl",
+    "ngci": "ng/dl",
     "ugdl": "µg/dl",
-    "ugl": "µg/l",
+    "ug/dl": "µg/dl",
+    "ugl": "µg/L",
     "miu/ml": "mIU/ml",
-    "uiu/ml": "µIU/ml",
-    "ulu/ml": "µIU/ml",
-    "ululav": "µIU/ml",
-    "ululav": "µIU/ml",
-    "ululav": "µIU/ml",
-    "ululav": "µIU/ml",
-    "ululav": "µIU/ml",
-    "ululav": "µIU/ml",
+    "uIu/ml": "µIU/ml",
+    "ulU/m": "µIU/ml",
+    "ulU/ml": "µIU/ml"
 }
+
+# Apply corrections to the 'Units' column
+def correct_units_column(units_list):
+    return [unit_correction_map.get(unit.strip(), unit) for unit in units_list]
+
+# Example: After creating your DataFrame
+if "Units" in df.columns:
+    df["Units"] = correct_units_column(df["Units"])
 
 def normalize_unit_text(text):
     text = text.lower()
