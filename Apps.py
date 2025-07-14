@@ -1,5 +1,4 @@
 # ✅ Streamlit Lab Report OCR App with Final UI Fixes and Inline Comments
-# Importing required libraries
 import os
 import cv2
 import numpy as np
@@ -9,7 +8,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# ✅ Creating class mapping from YOLO class IDs to field labels
+# ✅ Class mapping from YOLO class IDs to field names
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -17,7 +16,7 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Loading the YOLOv5 ONNX model
+# ✅ Loading the YOLOv5 ONNX model from local path (if available)
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -28,7 +27,7 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# ✅ Preparing the image and running model inference
+# ✅ Preparing image and running YOLO prediction
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -39,7 +38,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# ✅ Processing predictions from YOLOv5 and applying Non-Max Suppression
+# ✅ Processing model predictions and applying NMS filtering
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -61,7 +60,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ Extracting OCR text using selected engine
+# ✅ Running OCR (EasyOCR or Pytesseract) and extracting data
 def extract_fields(image, boxes, indices, class_ids, ocr_engine):
     results = {key: [] for key in class_map.values()}
     for i in indices:
@@ -93,7 +92,7 @@ def extract_fields(image, boxes, indices, class_ids, ocr_engine):
 
     return pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
 
-# ✅ Merging fragmented test names intelligently
+# ✅ Merging fragmented rows under Test Name field
 def merge_fragmented_test_names(df):
     rows = df.to_dict("records")
     merged_rows, buffer = [], None
@@ -109,53 +108,55 @@ def merge_fragmented_test_names(df):
         merged_rows.append(buffer)
     return pd.DataFrame(merged_rows)
 
-# ✅ Drawing bounding boxes on original image
+# ✅ Drawing bounding boxes on image
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI layout setup
+# ✅ Setting up Streamlit layout
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
+
+# 🧾 App title (centered)
 st.markdown("<h2 style='text-align: center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
 
-# 📥 Google Drive sample link
+# 📥 Drive link (centered)
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True
 )
 
-# 🧠 OCR Engine selection (center-aligned)
+# 🧠 OCR Engine toggle block with central alignment
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div>", unsafe_allow_html=True)
     ocr_engine = st.radio("", ["EasyOCR", "Pytesseract"], index=0, horizontal=True, label_visibility="collapsed")
 
-# 🖥️ Installation warning for Pytesseract
 if ocr_engine == "Pytesseract":
     st.markdown("<div style='text-align:center; color:gray;'>⚠️ Pytesseract must be installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>", unsafe_allow_html=True)
 
-# 📘 How it works instructions
+# 📘 How it works - collapsible section
 with st.expander("📘 How it works", expanded=False):
     st.markdown("""
     1. **Upload** `.jpg`, `.jpeg`, or `.png` lab reports.
     2. YOLOv5 detects fields: Test Name, Value, Units, Reference Range.
-    3. EasyOCR or Pytesseract extracts text from those fields.
-    4. The app merges fragmented test names automatically.
-    5. View results and download as CSV.
+    3. EasyOCR or Pytesseract extracts text from detected fields.
+    4. Smart merging of split test names.
+    5. CSV download and bounding box overlay available.
     """)
 
-# 📤 Upload message
-st.markdown("<div style='text-align:center;'>📤 Upload lab reports (.jpg, .jpeg, or .png format)</div>", unsafe_allow_html=True)
+# 📤 Upload instruction (centered)
+st.markdown("<div style='text-align:center;'>📤 Upload .jpg, .jpeg or .png lab reports</div>", unsafe_allow_html=True)
 
-# 📤 File uploader for image input
+# ✅ Uploading files (jpg, jpeg, png allowed)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# ✅ Starting the OCR pipeline once files are uploaded
+# ✅ Starting processing if files uploaded
 if uploaded_files:
     model = load_yolo_model()
+
     for file in uploaded_files:
         st.markdown(f"---\n### 📄 Processing File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
@@ -174,15 +175,15 @@ if uploaded_files:
 
         st.success("✅ Extraction Complete!")
 
-        # Displaying extracted data table
+        # ✅ Show results in table
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        # Displaying image with bounding boxes
+        # ✅ Show annotated image
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices), use_container_width=True)
 
-        # ✅ Download and Reset All buttons
+        # ✅ Download + Reset All buttons (centered)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
