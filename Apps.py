@@ -130,11 +130,21 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ✅ OCR Engine Selection (Fully Centered and Functional)
-st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div>", unsafe_allow_html=True)
+# ✅ OCR Engine Selection (centered with heading and radio in same column)
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
-    ocr_engine = st.radio(label="", options=["EasyOCR", "Pytesseract"], index=0, horizontal=True, label_visibility="collapsed")
+    st.markdown(
+        "<div style='text-align:center; margin-bottom: 5px;'>"
+        "<span style='font-size:18px;'>🧠 <b>Select OCR Engine</b></span></div>",
+        unsafe_allow_html=True
+    )
+    ocr_engine = st.radio(
+        label="Select OCR Engine",
+        options=["EasyOCR", "Pytesseract"],
+        index=0,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
 
 # ✅ Pytesseract warning
 if ocr_engine == "Pytesseract":
