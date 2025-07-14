@@ -127,21 +127,29 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ✅ Create a 3-column layout and use the center one
-col1, col2, col3 = st.columns([1, 3, 1])
+# ✅ Centered heading
+st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div>", unsafe_allow_html=True)
 
+# ✅ State for OCR Engine selection
+if "ocr_engine" not in st.session_state:
+    st.session_state.ocr_engine = "EasyOCR"
+
+# ✅ 3 columns for layout (center two buttons)
+col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
-    # 🧠 Heading centered above the radio buttons
-    st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("EasyOCR", use_container_width=True):
+            st.session_state.ocr_engine = "EasyOCR"
+    with c2:
+        if st.button("Pytesseract", use_container_width=True):
+            st.session_state.ocr_engine = "Pytesseract"
 
-    # ✅ Centered radio buttons directly below heading
-    ocr_engine = st.radio(
-        label="Select OCR Engine",  # this label won't show due to collapsed visibility
-        options=["EasyOCR", "Pytesseract"],
-        index=0,
-        horizontal=True,
-        label_visibility="collapsed"  # hide label (heading shown above already)
-    )
+# ✅ Show which OCR is selected (you can hide this line if not needed)
+st.markdown(f"<div style='text-align:center; color:gray;'>Selected: <b>{st.session_state.ocr_engine}</b></div>", unsafe_allow_html=True)
+
+# ✅ Store in variable for downstream logic
+ocr_engine = st.session_state.ocr_engine
 
 # ✅ Pytesseract warning
 if ocr_engine == "Pytesseract":
