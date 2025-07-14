@@ -134,7 +134,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-center_col = st.columns([1, 2, 1])[1]
+center_col = st.columns([1, 3, 1])[1]
 with center_col:
     ocr_engine = st.radio("", ["EasyOCR", "Pytesseract"], index=0, horizontal=True, label_visibility="collapsed")
 
