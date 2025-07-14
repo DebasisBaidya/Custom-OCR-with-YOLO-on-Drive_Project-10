@@ -14,7 +14,7 @@ class_map = {
     3: "Reference Range"
 }
 
-# Loading YOLOv5 ONNX model from file
+# Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -23,7 +23,7 @@ def load_yolo_model():
     model = cv2.dnn.readNetFromONNX(model_path)
     return model
 
-# Running YOLO prediction on the image
+# Run YOLO prediction
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -34,7 +34,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# Processing predictions and applying Non-Maximum Suppression (NMS)
+# Process predictions and apply NMS
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -56,7 +56,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# Extracting OCR text for each detected box and building the table without unit classification
+# Extract OCR text for each detected box and build table without unit classification
 def extract_table(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
@@ -72,7 +72,6 @@ def extract_table(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # Converting crop to grayscale and resizing for better OCR accuracy
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -80,16 +79,14 @@ def extract_table(image, boxes, indices, class_ids):
         roi = cv2.bitwise_not(binary)
 
         try:
-            # Reading text lines from the ROI using EasyOCR
             lines = reader.readtext(roi, detail=0)
         except Exception:
             lines = []
 
-        # Joining all OCR lines in this box as a single string preserving spaces
+        # Join all OCR lines in box as single string (preserving spaces)
         text = " ".join([line.strip() for line in lines if line.strip()])
         results[label].append(text)
 
-    # Padding columns to equal length for DataFrame construction
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
@@ -97,7 +94,7 @@ def extract_table(image, boxes, indices, class_ids):
     df = pd.DataFrame(results)
     return df
 
-# Drawing bounding boxes on the image with labels
+# Draw bounding boxes on image with labels
 def draw_boxes(image, boxes, indices, class_ids):
     for i in indices:
         x, y, w, h = boxes[i]
@@ -114,17 +111,18 @@ def draw_boxes(image, boxes, indices, class_ids):
         )
     return image
 
-# Initializing Streamlit page configuration
+# Streamlit UI
 st.set_page_config(page_title="Lab Report OCR - No Unit Classification", layout="centered", page_icon="🧾")
 
-# Showing header and upload instructions with inline message
+st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR - Extract Table Without Unit Classification</h2>", unsafe_allow_html=True)
 st.markdown(
-    "<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b> 📂 Please upload lab report images to start extraction.</div>",
+    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
+    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True,
 )
+st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# Handling uploaded files
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
@@ -150,16 +148,12 @@ if uploaded_files:
         with c2:
             col_dl, col_rst = st.columns(2)
             with col_dl:
-                # Providing CSV download button for extracted table
                 st.download_button(
                     "⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv"
                 )
             with col_rst:
-                # Showing reset button and clearing session state on click
                 if st.button("🔄 Reset All"):
                     st.session_state.clear()
                     st.experimental_rerun()
-
 else:
-    # Showing info message if no files uploaded
-    st.info("⚠️ Please upload one or more lab report images to start extraction.")
+    st.info("Please upload one or more lab report images to start extraction.")
