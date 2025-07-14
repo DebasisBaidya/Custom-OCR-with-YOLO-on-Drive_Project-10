@@ -117,19 +117,12 @@ def draw_boxes(image, boxes, indices, class_ids):
 # Initializing Streamlit page configuration
 st.set_page_config(page_title="Lab Report OCR - No Unit Classification", layout="centered", page_icon="🧾")
 
-# Showing header
-st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR - Extract Table Without Unit Classification</h2>", unsafe_allow_html=True)
-
-# Showing upload instructions and inline message on the same line, centered
+# Showing header and upload instructions with inline message
 st.markdown(
-    "<div style='text-align:center; font-size:16px;'>"
-    "📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b> 📂 Please upload lab report images to start extraction."
-    "</div>",
+    "<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b> 📂 Please upload lab report images to start extraction.</div>",
     unsafe_allow_html=True,
 )
-
-# Showing file uploader below the instruction
-uploaded_files = st.file_uploader("", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 # Handling uploaded files
 if uploaded_files:
@@ -153,8 +146,7 @@ if uploaded_files:
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
-        # Showing buttons for download and reset side-by-side aligned right
-        c1, c2 = st.columns([3, 1])
+        c1, c2 = st.columns([1, 2])
         with c2:
             col_dl, col_rst = st.columns(2)
             with col_dl:
@@ -169,5 +161,5 @@ if uploaded_files:
                     st.experimental_rerun()
 
 else:
-    # Showing info message if no files uploaded (below uploader)
+    # Showing info message if no files uploaded
     st.info("⚠️ Please upload one or more lab report images to start extraction.")
