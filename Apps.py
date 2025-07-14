@@ -130,33 +130,27 @@ def draw_boxes(image, boxes, indices):
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ UI SECTION: Initial layout and toggles
+# ✅ Streamlit UI setup begins
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 st.markdown("<h2 style='text-align: center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
 
-# Google Drive link to test files
+# 📥 Sample lab reports Drive link
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True
 )
 
-# Theme selection radio (centered)
-st.markdown("<div style='text-align:center;'>🌗 <b>Choose Theme</b></div>", unsafe_allow_html=True)
+# 🧠 OCR Engine Toggle (center-aligned)
+st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div>", unsafe_allow_html=True)
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
-    theme = st.radio("", ["Light", "Dark"], index=0, horizontal=True, label_visibility="collapsed")
-
-# OCR engine toggle (centered)
-st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div>", unsafe_allow_html=True)
-col4, col5, col6 = st.columns([1, 2, 1])
-with col5:
     ocr_engine = st.radio("", ["EasyOCR", "Pytesseract"], index=0, horizontal=True, label_visibility="collapsed")
 
 if ocr_engine == "Pytesseract":
     st.markdown("<div style='text-align:center; color:gray;'>⚠️ Must be installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>", unsafe_allow_html=True)
 
-# Instruction collapsible section
+# 📘 Instruction section
 with st.expander("📘 How it works", expanded=False):
     st.markdown("""
     1. **Upload** `.jpg` lab reports.
@@ -166,11 +160,11 @@ with st.expander("📘 How it works", expanded=False):
     5. You can download CSV + view overlay image.
     """)
 
-# Upload message and uploader
+# 📤 Upload area message and uploader
 st.markdown("<div style='text-align:center;'>📤 Upload JPG lab reports<br>📂 Please upload one or more JPG files to begin.</div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg"], accept_multiple_files=True)
 
-# ✅ Processing uploaded files
+# ✅ Begin inference if files uploaded
 if uploaded_files:
     model = load_yolo_model()
     reader = easyocr.Reader(['en'], gpu=False)
@@ -179,7 +173,6 @@ if uploaded_files:
         st.markdown(f"---\n### 📄 Processing File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        # Showing processing spinner
         with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
             st.markdown("<div style='text-align:center;'>🔍 Running YOLOv5 Detection and OCR...</div>", unsafe_allow_html=True)
             preds, input_img = predict_yolo(model, image)
@@ -194,17 +187,17 @@ if uploaded_files:
 
         st.success("✅ Extraction Complete!")
 
-        # Showing results table
+        # Showing extracted DataFrame
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        # Showing bounding box overlay
+        # Showing YOLO bounding box overlay
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices), use_container_width=True)
 
-        # CSV download + Reset button (centered)
-        col7, col8, col9 = st.columns([1, 2, 1])
-        with col8:
+        # 📥 Download CSV + 🔄 Reset All (centered)
+        col4, col5, col6 = st.columns([1, 2, 1])
+        with col5:
             st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
             if st.button("🔄 Reset All"):
                 st.session_state.clear()
