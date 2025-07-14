@@ -11,181 +11,243 @@ from PIL import Image
 import easyocr
 
 # --------------------------------------------------
-# 🧠 I'm defining class‑id ➜ field mapping
+# 🧠 I'm defining class mapping for detected fields
 # --------------------------------------------------
 class_map = {
     0: "Test Name",
     1: "Value",
     2: "Units",
-    3: "Reference Range",
+    3: "Reference Range"
 }
 
 # --------------------------------------------------
-# 🧰 I'm compiling a quick regex that “looks like a unit”
-#      (contains "/" or IU/Iu/iu or ends with mL, L, g)
+# 🧠 I'm adding helpers to split mixed value‑unit strings
 # --------------------------------------------------
-unit_like_rx = re.compile(r"(g/|mg/|mmol/|iu|µiu|ml\b|l\b|/L|/dL)", re.I)
+# ✅ Regex: grabbing “13.5” and “g/dL” separately
+_unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([^\d\s]+.*)$", re.I)
+
+# ✅ Normalising common unit spellings / cases
+UNIT_NORMALISE = {
+    "g/dl":   "g/dL",
+    "mg/dl":  "mg/dL",
+    "mmol/l": "mmol/L",
+    "μiu/ml": "µIU/mL",
+}
+
+def _split_value_unit(txt: str):
+    """🔍 Returning clean (value, unit); blank unit if none found."""
+    m = _unit_rx.match(txt)
+    if not m:
+        return txt.strip(), ""          # nothing to split
+    val, unit = m.groups()
+    unit = UNIT_NORMALISE.get(unit.lower(), unit)  # fixing case / symbol
+    return val.strip(), unit.strip()
 
 # --------------------------------------------------
 # 🧠 I'm loading YOLOv5 ONNX model
 # --------------------------------------------------
-@st.cache_resource(show_spinner=False)
 def load_yolo_model():
-    net = cv2.dnn.readNetFromONNX("best.onnx")
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    return net
-
-# --------------------------------------------------
-# 🧠 I'm loading EasyOCR once per session
-# --------------------------------------------------
-@st.cache_resource(show_spinner=False)
-def load_easyocr():
-    return easyocr.Reader(["en"], gpu=False)
+    model_path = "best.onnx"
+    if not os.path.exists(model_path):
+        st.error("❌ Model file 'best.onnx' not found.")
+        st.stop()
+    model = cv2.dnn.readNetFromONNX(model_path)
+    return model
 
 # --------------------------------------------------
 # 📸 I'm running YOLOv5 detection on input image
 # --------------------------------------------------
-def predict_yolo(net, img, inp_wh=640):
-    h, w, _ = img.shape
-    s = max(h, w)
-    padded = np.zeros((s, s, 3), dtype=np.uint8)
-    padded[0:h, 0:w] = img
-    blob = cv2.dnn.blobFromImage(padded, 1/255, (inp_wh, inp_wh), swapRB=True, crop=False)
-    net.setInput(blob)
-    return net.forward(), padded
+def predict_yolo(model, image):
+    h, w = image.shape[:2]
+    max_rc = max(h, w)
+    input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
+    input_img[0:h, 0:w] = image
+    blob = cv2.dnn.blobFromImage(
+        input_img, 1 / 255, (640, 640), swapRB=True, crop=False
+    )
+    model.setInput(blob)
+    preds = model.forward()
+    return preds, input_img
 
 # --------------------------------------------------
 # 📦 I'm post‑processing YOLO outputs
 # --------------------------------------------------
-def process(preds, padded, conf=0.4, cls_th=0.25):
-    boxes, scores, cls_ids = [], [], []
-    H, W = padded.shape[:2]
-    fx, fy = W/640, H/640
-    for det in preds[0]:
-        if det[4] < conf:
-            continue
-        cls_conf = det[5:]
-        cls_id = int(np.argmax(cls_conf))
-        if cls_conf[cls_id] < cls_th:
-            continue
-        cx, cy, bw, bh = det[:4]
-        x = int((cx - bw/2) * fx)
-        y = int((cy - bh/2) * fy)
-        boxes.append([x, y, int(bw*fx), int(bh*fy)])
-        scores.append(float(det[4]))
-        cls_ids.append(cls_id)
-    keep = cv2.dnn.NMSBoxes(boxes, scores, cls_th, 0.45)
-    return keep.flatten() if len(keep) else [], boxes, cls_ids
+def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
+    boxes, confidences, class_ids = [], [], []
+    detections = preds[0]
+    h, w = input_img.shape[:2]
+    x_factor = w / 640
+    y_factor = h / 640
+    for det in detections:
+        conf = det[4]
+        if conf > conf_thresh:
+            scores = det[5:]
+            class_id = np.argmax(scores)
+            if scores[class_id] > score_thresh:
+                cx, cy, bw, bh = det[:4]
+                x = int((cx - bw / 2) * x_factor)
+                y = int((cy - bh / 2) * y_factor)
+                boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
+                confidences.append(float(conf))
+                class_ids.append(class_id)
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
+    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
 # --------------------------------------------------
 # 🔡 I'm extracting OCR text for every detected field
-#     + smart post‑step that moves unit‑like strings
-#       mistakenly classified as "Reference Range"
 # --------------------------------------------------
-def ocr_fields(img, boxes, keep, cls_ids, reader):
-    data = {v: [] for v in class_map.values()}
+def extract_table_text(image, boxes, indices, class_ids):
+    reader = easyocr.Reader(["en"], gpu=False)
+    results = {key: [] for key in class_map.values()}
 
-    for idx in keep:
-        cls_id = cls_ids[idx]
-        if cls_id not in class_map:
-            continue  # skip unknown class ids
-        label = class_map[cls_id]
-
-        x, y, w, h = boxes[idx]
-        crop = img[y:y+h, x:x+w]
+    for i in indices:
+        if i >= len(boxes) or i >= len(class_ids):
+            continue
+        x, y, w, h = boxes[i]
+        label = class_map.get(class_ids[i], "Field")
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
+        crop = image[y1:y2, x1:x2]
         if crop.size == 0:
             continue
 
-        # minimal preprocessing
-        g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        g = cv2.resize(g, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        _, th = cv2.threshold(cv2.GaussianBlur(g, (5,5), 0), 0, 255,
-                              cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        roi = cv2.bitwise_not(th)
+        # 🧹 Basic preprocessing to help EasyOCR
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, binary = cv2.threshold(
+            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        roi = cv2.bitwise_not(binary)
 
-        lines = reader.readtext(roi, detail=0) or []
-        for line in map(str.strip, lines):
-            if line:
-                data[label].append(line)
+        try:
+            lines = reader.readtext(roi, detail=0)
+        except Exception:
+            lines = []
 
-    # ✅ smart units correction: move unit‑looking text
-    moved_units = []
-    for txt in data["Reference Range"]:
-        if unit_like_rx.search(txt):
-            moved_units.append(txt)
-    if moved_units:
-        data["Reference Range"] = [t for t in data["Reference Range"] if t not in moved_units]
-        data["Units"].extend(moved_units)
+        for line in lines:
+            clean = line.strip()
+            if not clean:
+                continue
 
-    # pad columns equally
-    max_len = max(len(v) for v in data.values())
-    for k in data:
-        data[k] += [""] * (max_len - len(data[k]))
-    return pd.DataFrame(data)
+            # 🧠 NEW: splitting mixed value+unit strings on the fly
+            if label == "Value" and "Units" in results:
+                val, unit = _split_value_unit(clean)
+                results["Value"].append(val)
+                if unit:
+                    results["Units"].append(unit)
+                continue  # next OCR line
+
+            # 📌 Regular behaviour for all other cases
+            results[label].append(clean)
+
+    # 🧱 Padding columns so DataFrame aligns properly
+    max_len = max(len(v) for v in results.values()) if results else 0
+    for k in results:
+        results[k] += [""] * (max_len - len(results[k]))
+
+    df = pd.DataFrame(results)
+    return df
 
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
 # --------------------------------------------------
-def draw_boxes(img, boxes, keep, cls_ids):
-    for idx in keep:
-        if cls_ids[idx] not in class_map:
-            continue
-        x, y, w, h = boxes[idx]
-        label = class_map[cls_ids[idx]]
-        cv2.rectangle(img, (x, y), (x+w, y+h), (0,255,0), 2)
-        cv2.putText(img, label, (x, y-8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,255), 1)
-    return img
+def draw_boxes(image, boxes, indices, class_ids):
+    for i in indices:
+        x, y, w, h = boxes[i]
+        label = class_map.get(class_ids[i], "Field")
+        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.putText(
+            image,
+            label,
+            (x, y - 10 if y - 10 > 10 else y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            2,
+        )
+    return image
 
 # --------------------------------------------------
-# 🎯 I'm building the Streamlit UI
+# 🎯 I'm building the Streamlit app UI
 # --------------------------------------------------
-st.set_page_config("Lab Report OCR", "centered", "🧾")
-st.markdown("<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>", unsafe_allow_html=True)
-st.markdown("<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> "
-            "from: <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' "
-            "target='_blank'>Drive Link</a></div><br>", unsafe_allow_html=True)
-st.markdown("""<div style='text-align:center; margin-bottom:0;'>
-📤 <b>Upload lab reports (.jpg, .jpeg, .png)</b><br>
-<small>📂 Upload one or more images to start extraction.</small>
-</div>""", unsafe_allow_html=True)
+st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-files = st.file_uploader(" ", ["jpg","jpeg","png"], True,
-                         key=st.session_state.get("uploader_key","file_uploader"))
+st.markdown(
+    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> "
+    "to test and upload from this: "
+    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' "
+    "target='_blank'>Drive Link</a></div><br>",
+    unsafe_allow_html=True,
+)
 
-if files:
-    net = load_yolo_model()
-    reader = load_easyocr()
-    for f in files:
-        st.markdown(f"<h4 style='text-align:center;'>📄 Processing : {f.name}</h4>", unsafe_allow_html=True)
-        _, mid, _ = st.columns([1,2,1])
-        with mid:
-            with st.spinner("🔍 Detecting & extracting..."):
-                img = np.array(Image.open(f).convert("RGB"))
-                preds, padded = predict_yolo(net, img)
-                keep, boxes, cls_ids = process(preds, padded)
-                if not keep.size:
-                    st.warning("⚠️ No fields detected.")
+st.markdown(
+    """
+<div style='text-align:center; margin-bottom:0;'>
+📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
+<small>📂 Please upload one or more lab report images to start extraction.</small>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+uploaded_files = st.file_uploader(
+    " ",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+    key=st.session_state.get("uploader_key", "file_uploader"),
+)
+
+if uploaded_files:
+    model = load_yolo_model()
+    for file in uploaded_files:
+        st.markdown(
+            f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>",
+            unsafe_allow_html=True,
+        )
+
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
+                image = np.array(Image.open(file).convert("RGB"))
+                preds, input_img = predict_yolo(model, image)
+                indices, boxes, class_ids = process_predictions(preds, input_img)
+                if len(indices) == 0:
+                    st.warning("⚠️ No fields detected in this image.")
                     continue
-                df = ocr_fields(img, boxes, keep, cls_ids, reader)
+                df = extract_table_text(image, boxes, indices, class_ids)
 
-        st.success("✅ Extraction Complete!")
-        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
+        st.markdown(
+            "<h5 style='text-align:center;'>✅ Extraction Complete!</h5>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
+            unsafe_allow_html=True,
+        )
         st.dataframe(df, use_container_width=True)
 
-        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
-        st.image(draw_boxes(img.copy(), boxes, keep, cls_ids), use_column_width=True)
+        st.markdown(
+            "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
+            unsafe_allow_html=True,
+        )
+        st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
-        _, mid, _ = st.columns([1,2,1])
-        with mid:
-            dl, clr = st.columns(2)
-            with dl:
-                st.download_button("⬇️ Download CSV",
-                                   df.to_csv(index=False),
-                                   f"{f.name}_ocr.csv",
-                                   "text/csv")
-            with clr:
-                
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            col_dl, col_rst = st.columns(2)
+            with col_dl:
+                st.download_button(
+                    "⬇️ Download CSV",
+                    df.to_csv(index=False),
+                    file_name=f"{file.name}_ocr.csv",
+                    mime="text/csv",
+                )
+            with col_rst:
                 # --------------------------------------------------
                 # 🧹 I'm clearing all session data & rerunning app
                 # --------------------------------------------------
