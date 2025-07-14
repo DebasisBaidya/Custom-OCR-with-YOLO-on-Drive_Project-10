@@ -62,10 +62,17 @@ def extract_table(image, boxes, indices, class_ids):
     results = {key: [] for key in class_map.values()}
     
     for i in indices:
-        if i >= len(boxes) or i >= len(class_ids): continue
+        if i >= len(boxes) or i >= len(class_ids): 
+            continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
-        crop = image[y:y+h, x:x+w]
+        # Safe crop with boundary check
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
+        crop = image[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+        
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -74,7 +81,7 @@ def extract_table(image, boxes, indices, class_ids):
 
         try:
             lines = reader.readtext(roi, detail=0)
-        except:
+        except Exception:
             lines = []
 
         for line in lines:
@@ -85,12 +92,12 @@ def extract_table(image, boxes, indices, class_ids):
     # Smart units correction
     auto_units = []
     for val in results["Reference Range"]:
-        if '/' in val or 'IU' in val.upper() or 'ml' in val.lower() or 'g/' in val.lower():
+        if any(x in val for x in ['/', 'IU', 'iu', 'ml', 'g/']):
             auto_units.append(val)
     results["Reference Range"] = [t for t in results["Reference Range"] if t not in auto_units]
     results["Units"].extend(auto_units)
 
-    max_len = max(len(v) for v in results.values())
+    max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
@@ -102,11 +109,12 @@ def draw_boxes(image, boxes, indices, class_ids):
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(image, label, (x, y - 10 if y - 10 > 10 else y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     return image
 
 # 🎯 Streamlit UI
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
+
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
@@ -116,19 +124,22 @@ st.markdown(
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# 🧪 Process Files
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
-        with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
-            image = np.array(Image.open(file).convert("RGB"))
-            preds, input_img = predict_yolo(model, image)
-            indices, boxes, class_ids = process_predictions(preds, input_img)
-            if len(indices) == 0:
-                st.warning("⚠️ No fields detected in this image.")
-                continue
-            df = extract_table(image, boxes, indices, class_ids)
+        
+        # Center spinner using columns
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
+                image = np.array(Image.open(file).convert("RGB"))
+                preds, input_img = predict_yolo(model, image)
+                indices, boxes, class_ids = process_predictions(preds, input_img)
+                if len(indices) == 0:
+                    st.warning("⚠️ No fields detected in this image.")
+                    continue
+                df = extract_table(image, boxes, indices, class_ids)
 
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
@@ -145,4 +156,6 @@ if uploaded_files:
             with col_rst:
                 if st.button("🔄 Reset All"):
                     st.session_state.clear()
-                    st.rerun()
+                    st.experimental_rerun()
+else:
+    st.info("Please upload one or more lab report images to start extraction.")
