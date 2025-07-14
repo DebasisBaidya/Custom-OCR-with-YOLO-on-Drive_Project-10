@@ -7,7 +7,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# Mapping class IDs to field labels
+# Class mapping
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -15,7 +15,7 @@ class_map = {
     3: "Reference Range"
 }
 
-# Load YOLOv5 ONNX model
+# Load YOLO ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -23,7 +23,7 @@ def load_yolo_model():
         st.stop()
     return cv2.dnn.readNetFromONNX(model_path)
 
-# Run YOLO prediction
+# Predict using YOLO
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -58,13 +58,12 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# OCR extraction
+# OCR text extraction
 def extract_fields(image, boxes, indices, class_ids, ocr_engine):
     results = {key: [] for key in class_map.values()}
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
-
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
         if not label:
@@ -120,45 +119,50 @@ def draw_boxes(image, boxes, indices):
 # Streamlit config
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-# Main title
+# Title
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;'>Upload JPG reports to extract medical test data using YOLOv5 + OCR</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Upload JPG lab reports to extract medical data using YOLOv5 + OCR</p>", unsafe_allow_html=True)
 
-# Sample link
+# Drive Link
 st.markdown("""
 <div style='text-align:center;'>
-📥 Download sample Lab Reports (JPG) to test and upload from this: 
+📥 Download sample Lab Reports (JPG) to test and upload from this:
 <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a>
 </div>
 """, unsafe_allow_html=True)
 
-# Center-aligned theme toggle
-st.markdown("<div style='text-align:center; margin-top:10px;'>🌗 <b>Choose Theme</b></div>", unsafe_allow_html=True)
-st.radio("", ["Light", "Dark"], index=0, horizontal=True, label_visibility="collapsed")
+# Theme toggle (centered)
+st.markdown("<div style='text-align:center;'>🌗 <b>Choose Theme</b></div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
+theme = st.radio("", ["Light", "Dark"], index=0, horizontal=True, label_visibility="collapsed")
+st.markdown("</div>", unsafe_allow_html=True)
 
-# How it works section
+# How it works
 with st.expander("📘 How it works", expanded=False):
     st.markdown("""
     1. Upload `.jpg` lab reports  
     2. YOLO detects Test Name, Value, Units, Reference Range  
     3. OCR reads text using EasyOCR or Pytesseract  
-    4. Merged rows are structured and exported  
+    4. Table shown with download and image overlay  
     """)
 
-# OCR selection (centered)
+# OCR engine radio buttons (centered)
 st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div>", unsafe_allow_html=True)
-ocr_engine = st.selectbox("", ["EasyOCR", "Pytesseract"], index=0)
+st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
+ocr_engine = st.radio("", ["EasyOCR", "Pytesseract"], index=0, horizontal=True, label_visibility="collapsed")
+st.markdown("</div>", unsafe_allow_html=True)
+
 if ocr_engine == "Pytesseract":
     st.markdown(
         "<div style='text-align:center; color:gray;'>⚠️ Tesseract must be installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>",
         unsafe_allow_html=True
     )
 
-# Upload section
+# File uploader
 st.markdown("<div style='text-align:center;'>📤 <b>Upload JPG lab reports</b><br><span style='color:gray;'>📂 Please upload one or more JPG files to begin.</span></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader("", type=["jpg"], accept_multiple_files=True)
 
-# Process uploads
+# Handle uploaded files
 if uploaded_files:
     model = load_yolo_model()
 
@@ -186,19 +190,19 @@ if uploaded_files:
         boxed_img = draw_boxes(image.copy(), boxes, indices)
         st.image(boxed_img, use_container_width=True, caption="Detected Regions")
 
-        # Final download + reset buttons centered
-        st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
-        st.download_button(
-            label="⬇️ Download as CSV",
-            data=df.to_csv(index=False),
-            file_name=f"{file.name}_ocr.csv",
-            mime="text/csv"
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-# Reset All button at bottom, center
-st.markdown("<div style='text-align:center; margin-top: 20px;'>", unsafe_allow_html=True)
-if st.button("🔄 Reset All"):
-    st.session_state.clear()
-    st.experimental_rerun()
-st.markdown("</div>", unsafe_allow_html=True)
+        # Download + Reset Button (centered together)
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            pass
+        with col2:
+            st.download_button(
+                label="⬇️ Download as CSV",
+                data=df.to_csv(index=False),
+                file_name=f"{file.name}_ocr.csv",
+                mime="text/csv"
+            )
+            if st.button("🔄 Reset All"):
+                st.session_state.clear()
+                st.experimental_rerun()
+        with col3:
+            pass
