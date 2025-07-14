@@ -1,4 +1,5 @@
 import os
+import re
 import cv2
 import numpy as np
 import pandas as pd
@@ -6,7 +7,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# 🧠 Class Mapping
+# 🧠 Class Mapping for detected fields
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -14,12 +15,13 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Smart Unit Correction Map
+# ✅ Robust Unit Correction Map (keys normalized)
 unit_correction_map = {
-    "Mdl": "mg/dl",
     "mdl": "mg/dl",
-    "ulUlav": "µIU/ml",
-    "uIU/ml": "µIU/ml",
+    "mdu": "mg/dl",
+    "mgl": "mg/dl",
+    "ululav": "µIU/ml",
+    "uiu/ml": "µIU/ml",
     "ugci": "µg/dl",
     "ngdi": "ng/dl",
     "ngci": "ng/dl",
@@ -27,14 +29,24 @@ unit_correction_map = {
     "ug/dl": "µg/dl",
     "ugl": "µg/L",
     "miu/ml": "mIU/ml",
-    "uIu/ml": "µIU/ml",
-    "ulU/m": "µIU/ml",
-    "ulU/ml": "µIU/ml"
+    "uiu/ml": "µIU/ml",
+    "ulu/m": "µIU/ml",
+    "ulu/ml": "µIU/ml"
 }
 
-# Apply corrections to the 'Units' column
+def normalize_unit_text(text):
+    # Lowercase, remove unwanted chars but keep / and µ
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9/µ]", "", text)
+    return text
+
 def correct_units_column(units_list):
-    return [unit_correction_map.get(unit.strip(), unit) for unit in units_list]
+    corrected_units = []
+    for unit in units_list:
+        norm_unit = normalize_unit_text(unit)
+        corrected = unit_correction_map.get(norm_unit, unit)
+        corrected_units.append(corrected)
+    return corrected_units
 
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
@@ -111,10 +123,10 @@ def extract_table(image, boxes, indices, class_ids):
             if clean:
                 results[label].append(clean)
 
-    # Smart units correction: move units from Reference Range if they look like units
+    # Extract units-like strings from Reference Range to Units (heuristic)
     auto_units = []
     for val in results["Reference Range"]:
-        if any(x in val for x in ['/', 'IU', 'iu', 'ml', 'g/', 'μ', 'mg', 'ug', 'mcg']):
+        if any(x in val.lower() for x in ['/', 'iu', 'ml', 'µ', 'mg', 'ug', 'mcg']):
             auto_units.append(val)
     results["Reference Range"] = [t for t in results["Reference Range"] if t not in auto_units]
     results["Units"].extend(auto_units)
@@ -125,13 +137,14 @@ def extract_table(image, boxes, indices, class_ids):
 
     return pd.DataFrame(results)
 
-# 🖼️ Draw bounding boxes
+# 🖼️ Draw bounding boxes on image
 def draw_boxes(image, boxes, indices, class_ids):
     for i in indices:
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(image, label, (x, y - 10 if y - 10 > 10 else y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(image, label, (x, y - 10 if y - 10 > 10 else y + 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     return image
 
 # 🎯 Streamlit UI
@@ -151,7 +164,6 @@ if uploaded_files:
     for file in uploaded_files:
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
         
-        # Center spinner using columns
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
@@ -163,7 +175,7 @@ if uploaded_files:
                     continue
                 df = extract_table(image, boxes, indices, class_ids)
 
-                # Apply your smart units correction here
+                # Apply robust unit corrections
                 if "Units" in df.columns:
                     df["Units"] = correct_units_column(df["Units"])
 
