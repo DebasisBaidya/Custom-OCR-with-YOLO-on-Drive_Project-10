@@ -15,31 +15,6 @@ class_map = {
     3: "Reference Range"
 }
 
-def normalize_unit_text(text):
-    text = text.lower().strip()
-    text = text.replace('p', 'µ')
-    text = text.replace('q', 'g')
-    text = text.replace('u', 'µ')
-    text = re.sub(r"[^a-z0-9/µ]", "", text)
-    return text
-
-def extract_units_from_texts(texts):
-    """
-    Given a list of text strings, extract all unit-like substrings using regex,
-    normalize them, and return a deduplicated sorted list.
-    """
-    unit_pattern = re.compile(
-        r"(µ?m?iu/ml|mg/dl|ng/dl|µg/dl|µg/l|mg/l|ng/ml|mg/ml|iu/ml|miu/ml|µiu/ml|µg|mg|ng|ml|l|dl)",
-        re.IGNORECASE,
-    )
-    found_units = set()
-    for text in texts:
-        matches = unit_pattern.findall(text)
-        for match in matches:
-            normalized = normalize_unit_text(match)
-            found_units.add(normalized)
-    return sorted(found_units)
-
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
@@ -86,14 +61,12 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table_and_all_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
-    all_ocr_texts = []
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
-        # Safe crop with boundary check
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y1:y2, x1:x2]
@@ -115,14 +88,13 @@ def extract_table_and_all_text(image, boxes, indices, class_ids):
             clean = line.strip()
             if clean:
                 results[label].append(clean)
-                all_ocr_texts.append(clean)
 
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
     df = pd.DataFrame(results)
-    return df, all_ocr_texts
+    return df
 
 # 🖼️ Draw bounding boxes on image
 def draw_boxes(image, boxes, indices, class_ids):
@@ -150,7 +122,9 @@ st.markdown(
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True,
 )
-st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div><br>", unsafe_allow_html=True)
+st.info("Please upload one or more lab report images to start extraction.")
+
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -167,20 +141,11 @@ if uploaded_files:
                 if len(indices) == 0:
                     st.warning("⚠️ No fields detected in this image.")
                     continue
-                df, all_ocr_texts = extract_table_and_all_text(image, boxes, indices, class_ids)
-
-                # Extract units from all OCR texts (no classification)
-                units_found = extract_units_from_texts(all_ocr_texts)
+                df = extract_table_and_all_text(image, boxes, indices, class_ids)
 
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
-
-        st.markdown("<h5 style='text-align:center;'>🔎 Detected Units (from all OCR text)</h5>", unsafe_allow_html=True)
-        if units_found:
-            st.markdown(", ".join(units_found))
-        else:
-            st.markdown("No units detected.")
 
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
@@ -196,5 +161,3 @@ if uploaded_files:
                 if st.button("🔄 Reset All"):
                     st.session_state.clear()
                     st.experimental_rerun()
-else:
-    st.info("Please upload one or more lab report images to start extraction.")
