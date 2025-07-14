@@ -15,29 +15,34 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Robust Unit Correction Map (keys normalized)
+# ✅ Expanded and robust unit correction map with common OCR misreads
 unit_correction_map = {
-    "mdl": "mg/dl",
-    "mdu": "mg/dl",
-    "mgl": "mg/dl",
-    "ululav": "µIU/ml",
-    "uiu/ml": "µIU/ml",
-    "ugci": "µg/dl",
-    "ngdi": "ng/dl",
-    "ngci": "ng/dl",
+    "mgdl": "mg/dl",
+    "mg/dl": "mg/dl",
+    "ngdl": "ng/dl",
+    "µgdl": "µg/dl",
+    "µg/dl": "µg/dl",
+    "pqdl": "µg/dl",      # OCR 'p' instead of 'µ', 'q' instead of 'g'
     "ugdl": "µg/dl",
-    "ug/dl": "µg/dl",
-    "ugl": "µg/L",
+    "ugl": "µg/l",
     "miu/ml": "mIU/ml",
     "uiu/ml": "µIU/ml",
-    "ulu/m": "µIU/ml",
-    "ulu/ml": "µIU/ml"
+    "ulu/ml": "µIU/ml",
+    "ululav": "µIU/ml",
+    "ululav": "µIU/ml",
+    "ululav": "µIU/ml",
+    "ululav": "µIU/ml",
+    "ululav": "µIU/ml",
+    "ululav": "µIU/ml",
 }
 
 def normalize_unit_text(text):
-    # Lowercase, remove unwanted chars but keep / and µ
     text = text.lower()
-    text = re.sub(r"[^a-z0-9/µ]", "", text)
+    # Replace common OCR confusions
+    text = text.replace('p', 'µ')  # 'p' often misread for 'µ'
+    text = text.replace('q', 'g')  # 'q' misread for 'g'
+    text = text.replace('u', 'µ')  # 'u' misread for 'µ'
+    text = re.sub(r"[^a-z0-9/µ]", "", text)  # remove unwanted chars except / and µ
     return text
 
 def correct_units_column(units_list):
