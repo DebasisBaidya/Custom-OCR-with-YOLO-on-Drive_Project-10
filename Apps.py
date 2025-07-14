@@ -7,7 +7,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# ✅ Mapping YOLO class IDs to readable field names
+# 👉 I am mapping YOLO class index to readable field names
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -15,7 +15,7 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Load YOLOv5 ONNX model
+# 👉 I am loading the ONNX YOLOv5 model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -26,7 +26,7 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# ✅ Run YOLO prediction
+# 👉 I am running YOLOv5 ONNX inference
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -37,7 +37,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# ✅ Filter and process predictions
+# 👉 I am filtering predictions based on confidence and class score
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -59,11 +59,11 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ Run OCR on cropped boxes
+# 👉 I am extracting text using EasyOCR or Pytesseract for each field
 def extract_fields(image, boxes, indices, class_ids, ocr_engine):
     results = {key: [] for key in class_map.values()}
     for i in indices:
-        if i >= len(boxes): continue
+        if i >= len(boxes) or i >= len(class_ids): continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
         if not label: continue
@@ -91,7 +91,7 @@ def extract_fields(image, boxes, indices, class_ids, ocr_engine):
 
     return pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
 
-# ✅ Merge split "Test Name" rows
+# 👉 I am merging fragmented rows (like split test names)
 def merge_fragmented_test_names(df):
     rows = df.to_dict("records")
     merged_rows, buffer = [], None
@@ -107,73 +107,77 @@ def merge_fragmented_test_names(df):
         merged_rows.append(buffer)
     return pd.DataFrame(merged_rows)
 
-# ✅ Draw detected bounding boxes
+# 👉 I am drawing bounding boxes on detected regions
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit layout and configuration
+# 👉 I am configuring the Streamlit UI
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-# ✅ App title and Drive link with line break
+# 👉 I am displaying app title and drive link
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
-st.markdown("""
-<div style='text-align:center;'>
-    📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: 
-    <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a>
-</div><br>
-""", unsafe_allow_html=True)
+st.markdown(
+    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b>: "
+    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
+    unsafe_allow_html=True
+)
 
-# ✅ Set OCR selection default state
+# 👉 I am setting default OCR engine
 if "ocr_engine" not in st.session_state:
     st.session_state.ocr_engine = "EasyOCR"
 
-# ✅ OCR Engine selector block (centered)
-st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div>", unsafe_allow_html=True)
+# 👉 I am showing the centered OCR engine selection using styled radio
+st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div><br>", unsafe_allow_html=True)
+centered_col = st.columns([1, 2, 1])[1]
+with centered_col:
+    selected_engine = st.radio(
+        "", ["EasyOCR", "Pytesseract"],
+        index=0 if st.session_state.ocr_engine == "EasyOCR" else 1,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    st.session_state.ocr_engine = selected_engine
 
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    c1, c2 = st.columns([1, 1])
-    selected = st.session_state.ocr_engine
-    with c1:
-        if st.button("✅ EasyOCR" if selected == "EasyOCR" else "EasyOCR"):
-            st.session_state.ocr_engine = "EasyOCR"
-    with c2:
-        if st.button("✅ Pytesseract" if selected == "Pytesseract" else "Pytesseract"):
-            st.session_state.ocr_engine = "Pytesseract"
+# 👉 I am displaying which engine is selected
+st.markdown(
+    f"<div style='text-align:center;'>Selected OCR Engine: <span style='color:red; font-weight:bold;'>{st.session_state.ocr_engine}</span></div><br>",
+    unsafe_allow_html=True
+)
 
-# ✅ Display selected engine
-st.markdown(f"<div style='text-align:center;'>Selected OCR Engine: <span style='color:red; font-weight:bold;'>{st.session_state.ocr_engine}</span></div><br>", unsafe_allow_html=True)
-
-# ✅ Tesseract warning
+# 👉 I am warning users to install pytesseract if selected
 if st.session_state.ocr_engine == "Pytesseract":
-    st.markdown("<div style='text-align:center; color:gray;'>⚠️ Requires Tesseract installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='text-align:center; color:gray;'>⚠️ Requires Tesseract installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>",
+        unsafe_allow_html=True
+    )
 
-# ✅ Help section
+# 👉 I am showing help section
 with st.expander("📘 How it works"):
     st.markdown("""
     1. Upload `.jpg`, `.jpeg`, or `.png` lab reports.
     2. YOLOv5 detects fields: Test Name, Value, Units, Reference Range.
     3. OCR (EasyOCR / Pytesseract) extracts text from detected fields.
-    4. Fragmented test names are merged.
-    5. Results are shown in a table and as annotated image.
+    4. Fragmented test names are merged intelligently.
+    5. Table and image are shown, with CSV download.
     """)
 
-# ✅ Upload prompt
+# 👉 I am placing the uploader
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# ✅ Main logic
+# 👉 I am processing uploaded images
 if uploaded_files:
     model = load_yolo_model()
 
     for file in uploaded_files:
-        st.markdown(f"---\n### 📄 Processing File: `{file.name}`")
+        st.markdown(f"<br><h5>📄 Processing File: <code>{file.name}</code></h5>", unsafe_allow_html=True)
         image = np.array(Image.open(file).convert("RGB"))
 
         with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
+            st.markdown("<div style='text-align:center;'>🔍 Running YOLOv5 Detection and OCR...</div>", unsafe_allow_html=True)
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
@@ -184,6 +188,7 @@ if uploaded_files:
             df = extract_fields(image, boxes, indices, class_ids, st.session_state.ocr_engine)
             df = merge_fragmented_test_names(df)
 
+        # 👉 I am displaying results
         st.success("✅ Extraction Complete!")
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
@@ -191,6 +196,7 @@ if uploaded_files:
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices), use_container_width=True)
 
+        # 👉 I am placing download and reset buttons
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
