@@ -15,38 +15,104 @@ class_map = {
     3: "Reference Range"
 }
 
-# Expanded correction map with common OCR errors observed
+# Unit correction map (lowercase keys)
 unit_correction_map = {
+    "mg/dl": "mg/dl",
     "mdl": "mg/dl",
     "mdu": "mg/dl",
     "mgl": "mg/dl",
+    "ng/dl": "ng/dl",
     "ngdl": "ng/dl",
-    "pqdl": "µg/dl",      # OCR 'p' instead of 'µ'
+    "µg/dl": "µg/dl",
+    "pqdl": "µg/dl",
     "ugdl": "µg/dl",
     "ug/dl": "µg/dl",
+    "µg/l": "µg/l",
     "ugl": "µg/l",
+    "µiu/ml": "µIU/ml",
     "uiu/ml": "µIU/ml",
     "ulu/ml": "µIU/ml",
     "ulu/m": "µIU/ml",
     "uluml": "µIU/ml",
     "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "miu/ml": "mIU/ml",
+    "mIU/ml": "mIU/ml",
     "ululav": "µIU/ml",
 }
 
 def normalize_unit_text(text):
     text = text.lower().strip()
-    # Replace common OCR confusions
-    text = text.replace('p', 'µ')  # 'p' often misread for 'µ'
-    text = text.replace('q', 'g')  # 'q' misread for 'g'
-    text = text.replace('u', 'µ')  # 'u' misread for 'µ'
-    text = re.sub(r"[^a-z0-9/µ]", "", text)  # remove unwanted chars except / and µ
+    text = text.replace('p', 'µ')
+    text = text.replace('q', 'g')
+    text = text.replace('u', 'µ')
+    text = re.sub(r"[^a-z0-9/µ]", "", text)
     return text
 
-def correct_units_column(units_list):
+def extract_unit_from_text(text):
+    """
+    Extract unit substring from an input text using regex.
+    Returns the first matched unit substring or None.
+    """
+    # Regex pattern to capture common units (µ, mg, ng, IU, ml, etc.)
+    pattern = re.compile(
+        r"(µ?m?iu/ml|mg/dl|ng/dl|µg/dl|µg/l|mg/l|ng/ml|mg/ml|iu/ml|miu/ml|µiu/ml|µg|mg|ng|ml|l|dl)",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(text)
+    if matches:
+        # Return the first match normalized
+        return normalize_unit_text(matches[0])
+    return None
+
+def correct_units_column(df):
+    """
+    Given a DataFrame with columns 'Units', 'Value', 'Reference Range',
+    extract and correct units robustly.
+    """
     corrected_units = []
-    for unit in units_list:
-        norm_unit = normalize_unit_text(unit)
-        corrected = unit_correction_map.get(norm_unit, norm_unit)
+    for idx, row in df.iterrows():
+        candidates = []
+        # Check Units column
+        unit_text = str(row.get("Units", "")).strip()
+        if unit_text:
+            unit_candidate = extract_unit_from_text(unit_text)
+            if unit_candidate:
+                candidates.append(unit_candidate)
+
+        # Also check Value and Reference Range columns for possible units
+        for col in ["Value", "Reference Range"]:
+            val_text = str(row.get(col, "")).strip()
+            if val_text:
+                unit_candidate = extract_unit_from_text(val_text)
+                if unit_candidate:
+                    candidates.append(unit_candidate)
+
+        # Pick the best candidate from candidates list
+        corrected = None
+        for candidate in candidates:
+            if candidate in unit_correction_map:
+                corrected = unit_correction_map[candidate]
+                break
+        # If no candidate matched, fallback to the first candidate normalized or empty
+        if not corrected and candidates:
+            corrected = candidates[0]
+        # If still no candidate, empty string
+        if not corrected:
+            corrected = ""
+
         corrected_units.append(corrected)
     return corrected_units
 
@@ -65,7 +131,7 @@ def predict_yolo(model, image):
     max_rc = max(h, w)
     input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
     input_img[0:h, 0:w] = image
-    blob = cv2.dnn.blobFromImage(input_img, 1/255, (640, 640), swapRB=True, crop=False)
+    blob = cv2.dnn.blobFromImage(input_img, 1 / 255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
@@ -94,7 +160,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 
 # 🔡 OCR + Table Extraction with Smart Units Correction
 def extract_table(image, boxes, indices, class_ids):
-    reader = easyocr.Reader(['en'], gpu=False)
+    reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
 
     for i in indices:
@@ -128,7 +194,7 @@ def extract_table(image, boxes, indices, class_ids):
     # Extract units-like strings from Reference Range to Units (heuristic)
     auto_units = []
     for val in results["Reference Range"]:
-        if any(x in val.lower() for x in ['/', 'iu', 'ml', 'µ', 'mg', 'ug', 'mcg']):
+        if any(x in val.lower() for x in ["/", "iu", "ml", "µ", "mg", "ug", "mcg"]):
             auto_units.append(val)
     results["Reference Range"] = [t for t in results["Reference Range"] if t not in auto_units]
     results["Units"].extend(auto_units)
@@ -145,8 +211,15 @@ def draw_boxes(image, boxes, indices, class_ids):
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(image, label, (x, y - 10 if y - 10 > 10 else y + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(
+            image,
+            label,
+            (x, y - 10 if y - 10 > 10 else y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            2,
+        )
     return image
 
 # 🎯 Streamlit UI
@@ -156,7 +229,7 @@ st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>",
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -179,7 +252,7 @@ if uploaded_files:
 
                 # Apply robust unit corrections
                 if "Units" in df.columns:
-                    df["Units"] = correct_units_column(df["Units"])
+                    df["Units"] = correct_units_column(df)
 
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
@@ -192,7 +265,9 @@ if uploaded_files:
         with c2:
             col_dl, col_rst = st.columns(2)
             with col_dl:
-                st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
+                st.download_button(
+                    "⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv"
+                )
             with col_rst:
                 if st.button("🔄 Reset All"):
                     st.session_state.clear()
