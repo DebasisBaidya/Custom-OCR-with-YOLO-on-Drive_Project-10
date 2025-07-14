@@ -125,10 +125,10 @@ st.markdown(
 )
 
 st.markdown("""
-<div style='text-align:center;'>
+<div style='text-align:center; margin-bottom:0;'>
 📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
-📂 Please upload one or more lab report images to start extraction.
-</div><br>
+<small>📂 Please upload one or more lab report images to start extraction.</small>
+</div>
 """, unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
