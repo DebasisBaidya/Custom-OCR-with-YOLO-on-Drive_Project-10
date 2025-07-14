@@ -21,28 +21,6 @@ class_map = {
 }
 
 # --------------------------------------------------
-# ✅ I'm simplifying unit‑correction logic
-# --------------------------------------------------
-def correct_unit(text):
-    text = text.lower().strip()
-    text = re.sub(r'[^a-z0-9/µ]', '', text)      # keeping slash and µ
-    simple_map = {
-        "mgdl":  "mg/dl",
-        "mg/dl": "mg/dl",
-        "ugdl":  "µg/dl",
-        "ug/dl": "µg/dl",
-        "µgdl":  "µg/dl",
-        "µg/dl": "µg/dl",
-        "ngdl":  "ng/dl",
-        "ng/dl": "ng/dl",
-        "iu/ml":  "IU/ml",
-        "miu/ml": "mIU/ml",
-        "µiu/ml": "µIU/ml",
-        "uiu/ml": "µIU/ml",
-    }
-    return simple_map.get(text, text)
-
-# --------------------------------------------------
 # 🧠 I'm loading YOLOv5 ONNX model
 # --------------------------------------------------
 def load_yolo_model():
@@ -61,7 +39,9 @@ def predict_yolo(model, image):
     max_rc = max(h, w)
     input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
     input_img[0:h, 0:w] = image
-    blob = cv2.dnn.blobFromImage(input_img, 1 / 255, (640, 640), swapRB=True, crop=False)
+    blob = cv2.dnn.blobFromImage(
+        input_img, 1 / 255, (640, 640), swapRB=True, crop=False
+    )
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
@@ -111,19 +91,19 @@ def extract_table_text(image, boxes, indices, class_ids):
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        _, binary = cv2.threshold(
+            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
         roi = cv2.bitwise_not(binary)
 
         try:
             lines = reader.readtext(roi, detail=0)
-        except:
+        except Exception:
             lines = []
 
         for line in lines:
             clean = line.strip()
             if clean:
-                if label == "Units":
-                    clean = correct_unit(clean)
                 results[label].append(clean)
 
     max_len = max(len(v) for v in results.values()) if results else 0
@@ -157,19 +137,27 @@ def draw_boxes(image, boxes, indices, class_ids):
 # --------------------------------------------------
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-st.markdown("<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>", unsafe_allow_html=True)
 st.markdown(
-    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
-    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
+    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> "
+    "to test and upload from this: "
+    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' "
+    "target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True,
 )
 
-st.markdown("""
+st.markdown(
+    """
 <div style='text-align:center; margin-bottom:0;'>
 📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
 <small>📂 Please upload one or more lab report images to start extraction.</small>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 uploaded_files = st.file_uploader(
     " ",
@@ -181,7 +169,10 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
-        st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
+        st.markdown(
+            f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>",
+            unsafe_allow_html=True,
+        )
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
@@ -194,11 +185,20 @@ if uploaded_files:
                     continue
                 df = extract_table_text(image, boxes, indices, class_ids)
 
-        st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
-        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
+        st.markdown(
+            "<h5 style='text-align:center;'>✅ Extraction Complete!</h5>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
+            unsafe_allow_html=True,
+        )
         st.dataframe(df, use_container_width=True)
 
-        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
+        st.markdown(
+            "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
+            unsafe_allow_html=True,
+        )
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
@@ -215,7 +215,8 @@ if uploaded_files:
                 # --------------------------------------------------
                 # 🧹 I'm clearing all session data & rerunning app
                 # --------------------------------------------------
-                if st.button("🧹 Clear All", key="clear_btn"):
-                    for k in ("uploaded_files", "extracted_dfs", "uploader_key"):
-                        st.session_state.pop(k, None)
-                    st.experimental_rerun()
+                if st.button("🧹 Clear All"):
+                    st.session_state["uploaded_files"] = []
+                    st.session_state["extracted_dfs"] = []
+                    # Change uploader key to force reset file uploader widget
+                    st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
