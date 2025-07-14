@@ -15,34 +15,26 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Smart Unit Correction Map
+# Expanded correction map with common OCR errors observed
 unit_correction_map = {
-    "Mdl": "mg/dl",
     "mdl": "mg/dl",
-    "ulUlav": "µIU/ml",
-    "uIU/ml": "µIU/ml",
-    "ugci": "µg/dl",
-    "ngdi": "ng/dl",
-    "ngci": "ng/dl",
+    "mdu": "mg/dl",
+    "mgl": "mg/dl",
+    "ngdl": "ng/dl",
+    "pqdl": "µg/dl",      # OCR 'p' instead of 'µ'
     "ugdl": "µg/dl",
     "ug/dl": "µg/dl",
-    "ugl": "µg/L",
+    "ugl": "µg/l",
+    "uiu/ml": "µIU/ml",
+    "ulu/ml": "µIU/ml",
+    "ulu/m": "µIU/ml",
+    "uluml": "µIU/ml",
     "miu/ml": "mIU/ml",
-    "uIu/ml": "µIU/ml",
-    "ulU/m": "µIU/ml",
-    "ulU/ml": "µIU/ml"
+    "ululav": "µIU/ml",
 }
 
-# Apply corrections to the 'Units' column
-def correct_units_column(units_list):
-    return [unit_correction_map.get(unit.strip(), unit) for unit in units_list]
-
-# Example: After creating your DataFrame
-if "Units" in df.columns:
-    df["Units"] = correct_units_column(df["Units"])
-
 def normalize_unit_text(text):
-    text = text.lower()
+    text = text.lower().strip()
     # Replace common OCR confusions
     text = text.replace('p', 'µ')  # 'p' often misread for 'µ'
     text = text.replace('q', 'g')  # 'q' misread for 'g'
@@ -54,7 +46,7 @@ def correct_units_column(units_list):
     corrected_units = []
     for unit in units_list:
         norm_unit = normalize_unit_text(unit)
-        corrected = unit_correction_map.get(norm_unit, unit)
+        corrected = unit_correction_map.get(norm_unit, norm_unit)
         corrected_units.append(corrected)
     return corrected_units
 
@@ -104,9 +96,9 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table(image, boxes, indices, class_ids):
     reader = easyocr.Reader(['en'], gpu=False)
     results = {key: [] for key in class_map.values()}
-    
+
     for i in indices:
-        if i >= len(boxes) or i >= len(class_ids): 
+        if i >= len(boxes) or i >= len(class_ids):
             continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
@@ -116,7 +108,7 @@ def extract_table(image, boxes, indices, class_ids):
         crop = image[y1:y2, x1:x2]
         if crop.size == 0:
             continue
-        
+
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -153,7 +145,7 @@ def draw_boxes(image, boxes, indices, class_ids):
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(image, label, (x, y - 10 if y - 10 > 10 else y + 20), 
+        cv2.putText(image, label, (x, y - 10 if y - 10 > 10 else y + 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     return image
 
@@ -173,7 +165,7 @@ if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
-        
+
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
