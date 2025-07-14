@@ -5,6 +5,7 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 from PIL import Image
+import easyocr
 
 # 🧠 Class Mapping
 class_map = {
@@ -58,9 +59,10 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 
 # 🔡 OCR Extraction
 def extract_fields(image, boxes, indices, class_ids):
+    reader = easyocr.Reader(['en'], gpu=False)
     results = {key: [] for key in class_map.values()}
     for i in indices:
-        if i >= len(boxes) or i >= len(class_ids): continue
+        if i >= len(boxes): continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
         if not label: continue
@@ -71,11 +73,11 @@ def extract_fields(image, boxes, indices, class_ids):
         _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(th)
         try:
-            text = pytesseract.image_to_string(roi, config='--oem 3 --psm 6').strip()
+            lines = reader.readtext(roi, detail=0)
         except:
-            text = ""
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        results[label].extend(lines)
+            lines = []
+        clean_lines = [line.strip() for line in lines if line.strip()]
+        results[label].extend(clean_lines)
 
     # ✅ Smart Units Correction
     smart_units = []
@@ -118,7 +120,7 @@ if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
-        with st.spinner("<div style='text-align:center;'>🔍 Running YOLOv5 Detection and OCR...</div>"):
+        with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
             image = np.array(Image.open(file).convert("RGB"))
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
@@ -128,7 +130,6 @@ if uploaded_files:
             df = extract_fields(image, boxes, indices, class_ids)
 
         st.success("✅ Extraction Complete!")
-
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
