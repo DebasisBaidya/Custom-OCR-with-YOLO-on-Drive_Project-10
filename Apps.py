@@ -15,7 +15,7 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Unit Normalization Map
+# ✅ Unit Normalization & Correction
 def normalize_unit(text):
     text = text.lower().strip()
     text = text.replace('p', 'µ').replace('u', 'µ').replace('q', 'g')
@@ -35,19 +35,31 @@ unit_correction_map = {
     "ululav": "µIU/ml",
     "uluv": "µIU/ml",
     "ul/ml": "µIU/ml",
-    "ulU/ml": "µIU/ml",
+    "uluuml": "µIU/ml",
     "miu/ml": "mIU/ml",
     "iu/ml": "IU/ml",
     "uIU/ml": "µIU/ml",
     "µiu/ml": "µIU/ml",
     "µu/ml": "µIU/ml",
     "uiuml": "µIU/ml",
-    "uluuml": "µIU/ml"
 }
 
 def correct_unit(text):
     norm = normalize_unit(text)
-    return unit_correction_map.get(norm, text)
+
+    # Direct map
+    if norm in unit_correction_map:
+        return unit_correction_map[norm]
+
+    # Regex fallback
+    if re.match(r"µ?i{1,2}u/ml", norm): return "µIU/ml"
+    if re.match(r"mg/?dl", norm): return "mg/dl"
+    if re.match(r"µ?g/?dl", norm): return "µg/dl"
+    if re.match(r"ng/?dl", norm): return "ng/dl"
+    if re.match(r"µ?g/?l", norm): return "µg/L"
+    if re.match(r"iu/ml", norm): return "IU/ml"
+
+    return text
 
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
@@ -107,7 +119,6 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # Best OCR preprocessing
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -167,7 +178,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="uploaded_files")
 
 if uploaded_files:
     model = load_yolo_model()
@@ -201,4 +212,5 @@ if uploaded_files:
                 )
             with col_rst:
                 if st.button("🧹 Clear All"):
-                    st.session_state.clear()
+                    st.session_state["uploaded_files"] = None
+                    st.rerun()
