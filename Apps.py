@@ -21,10 +21,13 @@ class_map = {
 }
 
 # --------------------------------------------------
-# ✅ I'm simplifying unit correction logic
+# ✅ I'm simplifying unit‑correction logic
 # --------------------------------------------------
 def correct_unit(text):
     text = text.lower().strip()
+    # basic cleanup
+    text = re.sub(r'[^a-z0-9/µ]', '', text)
+    # direct mappings only
     simple_map = {
         "mgdl": "mg/dl",
         "ugdl": "µg/dl",
@@ -34,7 +37,6 @@ def correct_unit(text):
         "µiu/ml": "µIU/ml",
         "uiu/ml": "µIU/ml",
     }
-    text = re.sub(r'[^a-z0-9/µ]', '', text)
     return simple_map.get(text, text)
 
 # --------------------------------------------------
@@ -49,7 +51,7 @@ def load_yolo_model():
     return model
 
 # --------------------------------------------------
-# 📸 I'm running YOLOv5 detection on image
+# 📸 I'm running YOLOv5 detection on input image
 # --------------------------------------------------
 def predict_yolo(model, image):
     h, w = image.shape[:2]
@@ -86,7 +88,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
 # --------------------------------------------------
-# 🔡 I'm extracting OCR text from each detected field
+# 🔡 I'm extracting OCR text for every detected field
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
@@ -129,7 +131,7 @@ def extract_table_text(image, boxes, indices, class_ids):
     return df
 
 # --------------------------------------------------
-# 🖼️ I'm drawing detected boxes on original image
+# 🖼️ I'm drawing bounding boxes on original image
 # --------------------------------------------------
 def draw_boxes(image, boxes, indices, class_ids):
     for i in indices:
