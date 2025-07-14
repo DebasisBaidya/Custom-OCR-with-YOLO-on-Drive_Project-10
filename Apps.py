@@ -56,13 +56,14 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# 🔡 OCR Extraction (Improved Alignment)
+# 🔡 OCR Extraction
 def extract_fields(image, boxes, indices, class_ids):
-    raw_data = []
+    results = {key: [] for key in class_map.values()}
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids): continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i])
+        if not label: continue
         crop = image[y:y+h, x:x+w]
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=3, fy=3)
@@ -73,28 +74,24 @@ def extract_fields(image, boxes, indices, class_ids):
             text = pytesseract.image_to_string(roi, config='--oem 3 --psm 6').strip()
         except:
             text = ""
-        raw_data.append((label, x, y, text))
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        results[label].extend(lines)
 
-    # Sort and align by rows (Y-axis)
-    raw_data.sort(key=lambda x: (x[2], x[1]))
-    rows, temp, last_y = [], {}, None
-    for label, x, y, text in raw_data:
-        if last_y is None or abs(y - last_y) > 30:
-            if temp: rows.append(temp)
-            temp = {}
-            last_y = y
-        temp[label] = text
-    if temp: rows.append(temp)
-    df = pd.DataFrame(rows).fillna("")
+    # ✅ Normalize column lengths
+    max_len = max(len(v) for v in results.values())
+    for k in results:
+        results[k] += [""] * (max_len - len(results[k]))
 
-    # ✅ Smart Unit Correction
-    smart_units = []
-    for t in df["Reference Range"]:
-        if any(kw in t for kw in ["/", "IU", "ml", "g/", "%"]):
-            smart_units.append(t)
+    df = pd.DataFrame(results)
+
+    # ✅ Smart Unit Correction (safe)
     df["Units"] = df["Units"].astype(str)
-    df["Units"] = df["Units"] + ["; " + u if u else "" for u in smart_units]
-    df["Reference Range"] = df["Reference Range"].apply(lambda x: "" if x in smart_units else x)
+    df["Reference Range"] = df["Reference Range"].astype(str)
+    unit_keywords = ["/", "IU", "ml", "g/", "%"]
+    for idx, val in df["Reference Range"].items():
+        if any(kw in val for kw in unit_keywords):
+            df.at[idx, "Units"] += ("; " + val if df.at[idx, "Units"] else val)
+            df.at[idx, "Reference Range"] = ""
 
     return df
 
@@ -104,7 +101,7 @@ def draw_boxes(image, boxes, indices, class_ids):
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     return image
 
 # 🎯 Streamlit UI
@@ -125,8 +122,7 @@ if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
-        st.markdown("<div style='text-align:center;'>🔍 Running YOLOv5 Detection and OCR...</div>", unsafe_allow_html=True)
-        with st.spinner("Detecting and extracting text..."):
+        with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
             image = np.array(Image.open(file).convert("RGB"))
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
@@ -136,16 +132,19 @@ if uploaded_files:
             df = extract_fields(image, boxes, indices, class_ids)
 
         st.success("✅ Extraction Complete!")
+
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
-        col_dl, col_rst = st.columns(2)
-        with col_dl:
-            st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
-        with col_rst:
-            if st.button("🔄 Reset All"):
-                st.session_state.clear()
-                st.experimental_rerun()
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            b1, b2 = st.columns(2)
+            with b1:
+                st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
+            with b2:
+                if st.button("🔄 Reset All"):
+                    st.session_state.clear()
+                    st.experimental_rerun()
