@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
-from io import BytesIO
 
 # 🧠 I am mapping detected class IDs to readable field names
 class_map = {
@@ -61,17 +60,12 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 # 🧰 I am preparing advanced preprocessing to handle hazy / low‑quality crops
 
 def preprocess_for_ocr(crop):
-    # 👉 I am converting to grayscale
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    # 👉 I am denoising with Non‑Local Means so noise gets reduced while details stay
     gray = cv2.fastNlMeansDenoising(gray, None, h=30, templateWindowSize=7, searchWindowSize=21)
-    # 👉 I am applying CLAHE to boost local contrast
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = clahe.apply(gray)
-    # 👉 I am sharpening the image with an unsharp mask
     blur = cv2.GaussianBlur(gray, (0, 0), 3)
     sharpen = cv2.addWeighted(gray, 1.5, blur, -0.5, 0)
-    # 👉 I am thresholding adaptively for uneven lighting
     bin_img = cv2.adaptiveThreshold(
         sharpen,
         255,
@@ -80,13 +74,11 @@ def preprocess_for_ocr(crop):
         31,
         10,
     )
-    # 👉 I am inverting so text stays black for EasyOCR preference
     return cv2.bitwise_not(bin_img)
 
 # 🔡 I am extracting text and confidence using EasyOCR with robust preprocessing
 
 def extract_table_text(image, boxes, indices, class_ids):
-    # 👉 I am creating the reader once for speed
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
     results["Confidence"] = []
@@ -97,35 +89,25 @@ def extract_table_text(image, boxes, indices, class_ids):
         crop = image[max(0, y) : y + h, max(0, x) : x + w]
         if crop.size == 0:
             continue
-
-        # 👉 I am applying the advanced preprocessing pipeline
         roi = preprocess_for_ocr(crop)
-
-        # 👉 I am running EasyOCR with detail to fetch confidence
         try:
             ocr_results = reader.readtext(roi, detail=1, paragraph=False, decoder="beamsearch")
         except Exception:
             ocr_results = []
-
-        # 👉 I am falling back to original crop if processed ROI gives nothing
         if len(ocr_results) == 0:
             try:
                 ocr_results = reader.readtext(crop, detail=1, paragraph=False, decoder="beamsearch")
             except Exception:
                 ocr_results = []
-
         for (_bbox, text, conf) in ocr_results:
             clean = text.strip()
             if clean:
                 results[label].append(clean)
                 results["Confidence"].append(round(conf * 100, 2))
-
-    # 👉 I am normalising column lengths
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         default_val = 0.0 if k == "Confidence" else ""
         results[k] += [default_val] * (max_len - len(results[k]))
-
     return pd.DataFrame(results)
 
 # 🖼️ I am drawing bounding boxes and labels on the image
@@ -146,15 +128,6 @@ def draw_boxes(image, boxes, indices, class_ids):
         )
     return image
 
-# 💾 I am converting numpy image to bytes so user can download it
-
-def get_image_download_bytes(img_np):
-    pil_img = Image.fromarray(cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB))
-    buf = BytesIO()
-    pil_img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf
-
 # 🎯 I am setting up the Streamlit UI
 
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
@@ -170,65 +143,62 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# 👉 I am handling reset via URL param
 if "clear" in st.query_params:
     st.query_params.clear()
 
-# 🧰 I am preparing a placeholder so uploader stays at the bottom
-uploader_placeholder = st.empty()
-
-# 📂 I am reading uploaded files (if any)
-st.markdown("""
+st.markdown(
+    """
 <div style='text-align:center; margin-bottom:0;'>
 📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
 <small>📂 Please upload one or more lab report images to start extraction.</small>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="uploaded_files")
+uploader_placeholder = st.empty()
+
+uploaded_files = uploader_placeholder.file_uploader(
+    " ",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+    key="uploaded_files",
+)
 
 if uploaded_files:
     model = load_yolo_model()
     for idx, file in enumerate(uploaded_files):
         st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
-        with st.spinner("🔍 Running Detection & OCR..."):
-            image = np.array(Image.open(file).convert("RGB"))
-            preds, inp = predict_yolo(model, image)
-            inds, boxes, cls_ids = process_predictions(preds, inp)
-            if len(inds) == 0:
-                st.warning("⚠️ No fields detected in this image.")
-                continue
-            df = extract_table_text(image, boxes, inds, cls_ids)
+        _, mid, _ = st.columns([1, 2, 1])
+        with mid:
+            with st.spinner("🔍 Running Detection & OCR..."):
+                image = np.array(Image.open(file).convert("RGB"))
+                preds, inp = predict_yolo(model, image)
+                inds, boxes, cls_ids = process_predictions(preds, inp)
+                if len(inds) == 0:
+                    st.warning("⚠️ No fields detected in this image.")
+                    continue
+                df = extract_table_text(image, boxes, inds, cls_ids)
         st.success("✅ Extraction Complete!")
         st.subheader("🧾 Extracted Table")
         st.dataframe(df, use_container_width=True)
 
         annotated = draw_boxes(image.copy(), boxes, inds, cls_ids)
-        img_bytes = get_image_download_bytes(annotated)
         st.subheader("📦 Detected Fields on Image")
         st.image(annotated, use_container_width=True)
 
-        # 🎚 I am grouping action buttons together (CSV, Image, Clear)
         _, center, _ = st.columns([1, 2, 1])
         with center:
-            col_csv, col_img, col_clr = st.columns(3)
+            col_csv, col_clr = st.columns(2)
             with col_csv:
                 st.download_button(
-                    "⬇️ CSV",
+                    "⬇️ Download CSV",
                     df.to_csv(index=False),
                     file_name=f"{file.name}_ocr.csv",
                     mime="text/csv",
                     key=f"csv_{idx}",
                 )
-            with col_img:
-                st.download_button(
-                    "🖼️ Annotated",
-                    img_bytes,
-                    file_name=f"{file.name}_annotated.png",
-                    mime="image/png",
-                    key=f"img_{idx}",
-                )
             with col_clr:
-                if st.button("🧹 Clear", key=f"clear_{idx}"):
+                if st.button("🧹 Clear All", key=f"clear_{idx}"):
                     st.query_params.update({"clear": "true"})
                     st.stop()
