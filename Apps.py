@@ -160,7 +160,7 @@ if files:
                                file_name=f"{f.name}_ocr.csv", mime="text/csv")
         with col_rst:
             if st.button("🧹 Clear All"):
-                st.session_state["uploaded_files"] = []
+                    st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
                     # Changing uploader key to force reset of widget
                     st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
