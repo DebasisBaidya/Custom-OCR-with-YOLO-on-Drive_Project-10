@@ -130,38 +130,71 @@ def draw_boxes(image, boxes, indices):
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ Streamlit UI
-st.set_page_config(layout="wide")
-st.title("🧾 Medical Lab Report OCR (YOLOv5 + EasyOCR + Smart Merge)")
+# ✅ Streamlit UI: Fine-Tuned
+st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
+st.markdown(
+    "<h2 style='text-align: center;'>🧾 Lab Report OCR Extractor</h2>", 
+    unsafe_allow_html=True
+)
+st.markdown(
+    "This app uses **YOLOv5 (ONNX)** for field detection and **EasyOCR** for text extraction "
+    "from medical lab reports. Upload your JPG reports to begin.",
+    help="Built using OpenCV, EasyOCR, and Streamlit. Processes medical reports into structured tables."
+)
 
-uploaded_files = st.file_uploader("📤 Upload JPG report(s)", type=["jpg"], accept_multiple_files=True)
+with st.expander("📘 How it works", expanded=False):
+    st.markdown("""
+    1. **Upload** one or more `.jpg` lab reports.
+    2. Model **detects regions** like Test Name, Value, Units, Reference Range.
+    3. **Text is extracted** using EasyOCR.
+    4. Smart logic merges fragmented test names for better structure.
+    5. **Download** structured CSV or view with bounding box overlay.
+    """)
+
+uploaded_files = st.file_uploader(
+    "📤 Upload one or more JPG reports", 
+    type=["jpg"], 
+    accept_multiple_files=True,
+    help="Only JPG format supported. Max size depends on your browser limits."
+)
 
 if uploaded_files:
     model = load_yolo_model()
     reader = easyocr.Reader(['en'], gpu=False)
 
     for file in uploaded_files:
-        st.markdown(f"### 📄 File: `{file.name}`")
+        st.markdown(f"---\n### 📄 Processing File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
-        with st.spinner("🔍 Running YOLO + OCR..."):
+        with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
             preds, input_img = predict_yolo(model, image)
             indices, boxes, class_ids = process_predictions(preds, input_img)
 
             if len(indices) == 0:
-                st.warning("⚠️ No fields detected.")
+                st.warning("⚠️ No fields detected in this image.")
                 continue
 
             df = extract_fields_exploded(image, boxes, indices, class_ids, reader)
             df = merge_fragmented_test_names(df)
 
         st.success("✅ Extraction Complete!")
-        st.dataframe(df)
 
-        st.download_button("📥 Download CSV",
-                           df.to_csv(index=False),
-                           file_name=f"{file.name}_ocr.csv",
-                           mime="text/csv")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.markdown("#### 🧾 Structured Data (Extracted Table)")
+            st.dataframe(df, use_container_width=True)
+        with col2:
+            st.markdown("#### 📥 Download CSV")
+            st.download_button(
+                label="⬇️ Download Extracted CSV",
+                data=df.to_csv(index=False),
+                file_name=f"{file.name}_ocr.csv",
+                mime="text/csv"
+            )
 
-        boxed_image = draw_boxes(image.copy(), boxes, indices)
-        st.image(boxed_image, caption="📦 Detected Fields", use_container_width=True)
+        with st.expander("📦 View YOLO Detection Overlay", expanded=False):
+            boxed_image = draw_boxes(image.copy(), boxes, indices)
+            st.image(boxed_image, caption="Detected Fields", use_container_width=True)
+
+else:
+    st.info("📂 Please upload one or more JPG files to begin.")
