@@ -1,4 +1,4 @@
-# ✅ I'm importing all necessary libraries
+# Importing required libraries
 import os
 import cv2
 import numpy as np
@@ -8,7 +8,7 @@ import streamlit as st
 from PIL import Image
 import easyocr
 
-# ✅ I'm defining the YOLO class index to field name mapping
+# Defining the class index to label mapping
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -16,7 +16,7 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ I'm loading the YOLOv5 ONNX model from file
+# Loading YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
     if not os.path.exists(model_path):
@@ -27,7 +27,7 @@ def load_yolo_model():
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
 
-# ✅ I'm preparing the image and running YOLO predictions
+# Running inference using YOLO model
 def predict_yolo(model, image):
     h, w = image.shape[:2]
     max_rc = max(h, w)
@@ -38,7 +38,7 @@ def predict_yolo(model, image):
     preds = model.forward()
     return preds, input_img
 
-# ✅ I'm filtering predictions using confidence and score thresholds
+# Filtering detections using thresholds and NMS
 def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     boxes, confidences, class_ids = [], [], []
     detections = preds[0]
@@ -60,7 +60,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# ✅ I'm extracting OCR results using the selected engine
+# Extracting OCR results from cropped regions
 def extract_fields(image, boxes, indices, class_ids, ocr_engine):
     results = {key: [] for key in class_map.values()}
     for i in indices:
@@ -92,7 +92,7 @@ def extract_fields(image, boxes, indices, class_ids, ocr_engine):
 
     return pd.DataFrame({col: pd.Series(vals) for col, vals in results.items()})
 
-# ✅ I'm merging fragmented test names intelligently
+# Merging fragmented Test Name rows
 def merge_fragmented_test_names(df):
     rows = df.to_dict("records")
     merged_rows, buffer = [], None
@@ -108,34 +108,34 @@ def merge_fragmented_test_names(df):
         merged_rows.append(buffer)
     return pd.DataFrame(merged_rows)
 
-# ✅ I'm drawing bounding boxes for detected fields
+# Drawing bounding boxes on the image
 def draw_boxes(image, boxes, indices):
     for i in indices:
         x, y, w, h = boxes[i]
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
     return image
 
-# ✅ I'm configuring the Streamlit page
+# Setting up Streamlit layout
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-# ✅ I'm displaying the app title
+# Displaying App Title
 st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor</h2>", unsafe_allow_html=True)
 
-# ✅ I'm adding a download link for sample images
+# Providing sample Drive download link
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True
 )
 
-# ✅ I'm displaying the OCR engine selection title
+# Displaying OCR Engine Selection Header
 st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div>", unsafe_allow_html=True)
 
-# ✅ I'm initializing session state for OCR engine with default as EasyOCR
+# Initializing OCR engine selection state
 if "ocr_engine" not in st.session_state:
     st.session_state.ocr_engine = "EasyOCR"
 
-# ✅ I'm displaying two buttons side by side, centrally aligned
+# Creating two button boxes for OCR selection, center aligned
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     c1, c2 = st.columns(2)
@@ -146,17 +146,20 @@ with col2:
         if st.button("Pytesseract", use_container_width=True):
             st.session_state.ocr_engine = "Pytesseract"
 
-# ✅ I'm displaying the selected OCR engine with a line break after
-st.markdown(f"<br><div style='text-align:center; color:gray;'>Selected: <span style='color:#f63366;'><b>{st.session_state.ocr_engine}</b></span></div>", unsafe_allow_html=True)
+# Highlighting selected OCR engine in colored text and placing line break after it
+st.markdown(
+    f"<div style='text-align:center; color:gray;'>Selected:<br><b style='color:#e63946;'>{st.session_state.ocr_engine}</b></div>",
+    unsafe_allow_html=True
+)
 
-# ✅ I'm storing the engine selection for downstream use
+# Storing selected OCR engine in variable
 ocr_engine = st.session_state.ocr_engine
 
-# ✅ I'm showing a warning if Pytesseract is selected
+# Showing warning if pytesseract selected
 if ocr_engine == "Pytesseract":
     st.markdown("<div style='text-align:center; color:gray;'>⚠️ Requires Tesseract installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>", unsafe_allow_html=True)
 
-# ✅ I'm adding the how-it-works section
+# Creating expandable help section
 with st.expander("📘 How it works"):
     st.markdown("""
     1. Upload `.jpg`, `.jpeg`, or `.png` lab reports.
@@ -166,13 +169,11 @@ with st.expander("📘 How it works"):
     5. Results are shown as table and image, and downloadable as CSV.
     """)
 
-# ✅ I'm showing the upload section title
+# Uploading lab reports section (centered)
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
-
-# ✅ I'm handling multiple image uploads
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# ✅ I'm processing each uploaded image
+# Running inference and OCR
 if uploaded_files:
     model = load_yolo_model()
 
@@ -192,16 +193,16 @@ if uploaded_files:
             df = extract_fields(image, boxes, indices, class_ids, ocr_engine)
             df = merge_fragmented_test_names(df)
 
-        # ✅ I'm showing the results table
+        # Showing extracted table
         st.success("✅ Extraction Complete!")
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        # ✅ I'm showing the image with detection boxes
+        # Showing image with detected boxes
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices), use_container_width=True)
 
-        # ✅ I'm placing the download and reset buttons centrally
+        # Displaying download and reset buttons
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
