@@ -123,22 +123,41 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# 🧠 Selecting OCR engine (center-aligned radio buttons)
+# 🧠 OCR engine toggle buttons (center-aligned)
 if "ocr_engine" not in st.session_state:
     st.session_state.ocr_engine = "EasyOCR"
 
-st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div>", unsafe_allow_html=True)
-col1, col2, col3 = st.columns([2, 4, 2])
-with col2:
-    selected_engine = st.radio(
-        "",
-        ["EasyOCR", "Pytesseract"],
-        index=0 if st.session_state.ocr_engine == "EasyOCR" else 1,
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    st.session_state.ocr_engine = selected_engine
+st.markdown("<div style='text-align:center;'><b>🧠 Select OCR Engine</b></div><br>", unsafe_allow_html=True)
 
+col1, col2, col3 = st.columns([1.5, 3, 1.5])
+with col2:
+    col_easy, col_py = st.columns(2)
+
+    with col_easy:
+        if st.button("EasyOCR", key="easy", use_container_width=True):
+            st.session_state.ocr_engine = "EasyOCR"
+    with col_py:
+        if st.button("Pytesseract", key="py", use_container_width=True):
+            st.session_state.ocr_engine = "Pytesseract"
+
+# 👉 Applying highlight via HTML to show selected engine
+highlight_css = f"""
+<style>
+div[data-testid="column"] button {{
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-weight: bold;
+}}
+div[data-testid="column"] button:has(span:contains("{st.session_state.ocr_engine}")) {{
+    background-color: #ffcccc;
+    color: black;
+    border: 2px solid #d33;
+}}
+</style>
+"""
+st.markdown(highlight_css, unsafe_allow_html=True)
+
+# Showing selected engine
 st.markdown(
     f"<div style='text-align:center;'>Selected OCR Engine: <span style='color:red; font-weight:bold;'>{st.session_state.ocr_engine}</span></div><br>",
     unsafe_allow_html=True
@@ -156,11 +175,11 @@ with st.expander("📘 How it works"):
     4. Table and annotated image displayed.
     """)
 
-# 📤 File upload area
+# 📤 File upload
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# 🔁 Processing uploaded files
+# 🔁 File processing
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
@@ -176,13 +195,14 @@ if uploaded_files:
             df = extract_fields(image, boxes, indices, class_ids, st.session_state.ocr_engine)
             df = merge_fragmented_test_names(df)
 
-        # 📊 Showing output
+        # Display table and image
         st.success("✅ Extraction Complete!")
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices), use_container_width=True)
 
+        # Buttons: Download CSV and Reset
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
