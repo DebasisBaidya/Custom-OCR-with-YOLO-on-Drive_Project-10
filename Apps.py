@@ -14,6 +14,28 @@ class_map = {
     3: "Reference Range"
 }
 
+# ✅ Smart Unit Correction Map
+unit_correction_map = {
+    "Mdl": "mg/dl",
+    "mdl": "mg/dl",
+    "ulUlav": "µIU/ml",
+    "uIU/ml": "µIU/ml",
+    "ugci": "µg/dl",
+    "ngdi": "ng/dl",
+    "ngci": "ng/dl",
+    "ugdl": "µg/dl",
+    "ug/dl": "µg/dl",
+    "ugl": "µg/L",
+    "miu/ml": "mIU/ml",
+    "uIu/ml": "µIU/ml",
+    "ulU/m": "µIU/ml",
+    "ulU/ml": "µIU/ml"
+}
+
+# Apply corrections to the 'Units' column
+def correct_units_column(units_list):
+    return [unit_correction_map.get(unit.strip(), unit) for unit in units_list]
+
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
@@ -89,10 +111,10 @@ def extract_table(image, boxes, indices, class_ids):
             if clean:
                 results[label].append(clean)
 
-    # Smart units correction
+    # Smart units correction: move units from Reference Range if they look like units
     auto_units = []
     for val in results["Reference Range"]:
-        if any(x in val for x in ['/', 'IU', 'iu', 'ml', 'g/']):
+        if any(x in val for x in ['/', 'IU', 'iu', 'ml', 'g/', 'μ', 'mg', 'ug', 'mcg']):
             auto_units.append(val)
     results["Reference Range"] = [t for t in results["Reference Range"] if t not in auto_units]
     results["Units"].extend(auto_units)
@@ -141,12 +163,16 @@ if uploaded_files:
                     continue
                 df = extract_table(image, boxes, indices, class_ids)
 
+                # Apply your smart units correction here
+                if "Units" in df.columns:
+                    df["Units"] = correct_units_column(df["Units"])
+
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
-        st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_column_width=True)
+        st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
