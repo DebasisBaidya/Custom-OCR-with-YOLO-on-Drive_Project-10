@@ -1,13 +1,11 @@
 import os
 import cv2
-import re
 import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
 
-# Class mapping for detected fields
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -43,8 +41,9 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
         conf = det[4]
         if conf > conf_thresh:
             scores = det[5:]
-            class_id = np.argmax(scores)
-            if scores[class_id] > score_thresh:
+            class_id = int(np.argmax(scores))
+            score = scores[class_id]
+            if score > score_thresh:
                 cx, cy, bw, bh = det[:4]
                 x = int((cx - bw / 2) * x_factor)
                 y = int((cy - bh / 2) * y_factor)
@@ -52,7 +51,20 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
                 confidences.append(float(conf))
                 class_ids.append(class_id)
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
-    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
+    if len(indices) == 0:
+        return [], boxes, class_ids, confidences
+    indices = indices.flatten()
+
+    # For each class, keep only the box with highest confidence to avoid duplicates
+    best_indices = {}
+    for i in indices:
+        cid = class_ids[i]
+        conf = confidences[i]
+        if (cid not in best_indices) or (conf > confidences[best_indices[cid]]):
+            best_indices[cid] = i
+
+    final_indices = list(best_indices.values())
+    return final_indices, boxes, class_ids, confidences
 
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
@@ -80,11 +92,11 @@ def extract_table_text(image, boxes, indices, class_ids):
         except:
             lines = []
 
-        for line in lines:
-            clean = line.strip()
-            if clean:
-                results[label].append(clean)
+        # Join all lines into one string per box (to avoid multiple rows per field)
+        text = " ".join([line.strip() for line in lines if line.strip()])
+        results[label].append(text if text else "")
 
+    # Make sure all lists have same length (pad with empty strings)
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
@@ -124,7 +136,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Initialize session state keys if not present
 if "uploaded_files" not in st.session_state:
     st.session_state["uploaded_files"] = []
 if "extracted_dfs" not in st.session_state:
@@ -151,46 +162,46 @@ if st.session_state["uploaded_files"]:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
                 image = np.array(Image.open(file).convert("RGB"))
                 preds, input_img = predict_yolo(model, image)
-                indices, boxes, class_ids = process_predictions(preds, input_img)
+                indices, boxes, class_ids, confidences = process_predictions(preds, input_img)
                 if len(indices) == 0:
                     st.warning("⚠️ No fields detected in this image.")
                     continue
                 df = extract_table_text(image, boxes, indices, class_ids)
                 st.session_state["extracted_dfs"].append((file.name, df))
 
-    # Show extracted tables and images with boxes
     for fname, df in st.session_state["extracted_dfs"]:
         st.markdown(f"<h5 style='text-align:center;'>✅ Extraction Complete for {fname}!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        # Draw boxes on image
         file_obj = next((f for f in st.session_state["uploaded_files"] if f.name == fname), None)
         if file_obj:
             image = np.array(Image.open(file_obj).convert("RGB"))
             preds, input_img = predict_yolo(model, image)
-            indices, boxes, class_ids = process_predictions(preds, input_img)
+            indices, boxes, class_ids, confidences = process_predictions(preds, input_img)
             img_with_boxes = draw_boxes(image.copy(), boxes, indices, class_ids)
             st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
             st.image(img_with_boxes, use_container_width=True)
 
-    # Combine all extracted dataframes into one CSV for download
     combined_df = pd.concat([df for _, df in st.session_state["extracted_dfs"]], ignore_index=True)
 
-    # Show Download CSV and Clear All buttons only if extraction done
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
+    # Side-by-side centered buttons
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        c1, c2 = st.columns(2, gap="large")
         csv = combined_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📥 Download as CSV",
-            data=csv,
-            file_name="extracted_lab_report.csv",
-            mime="text/csv",
-        )
-        if st.button("🧹 Clear All"):
-            st.session_state["uploaded_files"] = []
-            st.session_state["extracted_dfs"] = []
-            st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
+        with c1:
+            st.download_button(
+                label="📥 Download as CSV",
+                data=csv,
+                file_name="extracted_lab_report.csv",
+                mime="text/csv",
+            )
+        with c2:
+            if st.button("🧹 Clear All"):
+                st.session_state["uploaded_files"] = []
+                st.session_state["extracted_dfs"] = []
+                st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
 else:
-    # No extraction yet, so no Clear or Download buttons
+    # No extraction yet: no buttons
     pass
