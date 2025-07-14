@@ -15,52 +15,6 @@ class_map = {
     3: "Reference Range"
 }
 
-# ✅ Unit Normalization & Correction
-def normalize_unit(text):
-    text = text.lower().strip()
-    text = text.replace('p', 'µ').replace('u', 'µ').replace('q', 'g')
-    text = re.sub(r'[^a-z0-9/µ]', '', text)
-    return text
-
-unit_correction_map = {
-    "mdl": "mg/dl",
-    "mgdl": "mg/dl",
-    "ugci": "µg/dl",
-    "ugdl": "µg/dl",
-    "ug/dl": "µg/dl",
-    "ugl": "µg/l",
-    "ngdi": "ng/dl",
-    "ngci": "ng/dl",
-    "uiu/ml": "µIU/ml",
-    "ululav": "µIU/ml",
-    "uluv": "µIU/ml",
-    "ul/ml": "µIU/ml",
-    "uluuml": "µIU/ml",
-    "miu/ml": "mIU/ml",
-    "iu/ml": "IU/ml",
-    "uIU/ml": "µIU/ml",
-    "µiu/ml": "µIU/ml",
-    "µu/ml": "µIU/ml",
-    "uiuml": "µIU/ml",
-}
-
-def correct_unit(text):
-    norm = normalize_unit(text)
-
-    # Direct map
-    if norm in unit_correction_map:
-        return unit_correction_map[norm]
-
-    # Regex fallback
-    if re.match(r"µ?i{1,2}u/ml", norm): return "µIU/ml"
-    if re.match(r"mg/?dl", norm): return "mg/dl"
-    if re.match(r"µ?g/?dl", norm): return "µg/dl"
-    if re.match(r"ng/?dl", norm): return "ng/dl"
-    if re.match(r"µ?g/?l", norm): return "µg/L"
-    if re.match(r"iu/ml", norm): return "IU/ml"
-
-    return text
-
 # ✅ Load YOLOv5 ONNX model
 def load_yolo_model():
     model_path = "best.onnx"
