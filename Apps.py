@@ -1,13 +1,13 @@
 import os
-import re
 import cv2
+import re
 import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
 
-# 🧠 Class Mapping for detected fields (used only for labeling boxes)
+# 🧠 Class Mapping for detected fields
 class_map = {
     0: "Test Name",
     1: "Value",
@@ -57,8 +57,8 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
-# 🔡 OCR + Table Extraction WITHOUT unit classification
-def extract_table_and_all_text(image, boxes, indices, class_ids):
+# 🔡 OCR + Table Extraction
+def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
 
@@ -73,6 +73,7 @@ def extract_table_and_all_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
+        # Best OCR preprocessing
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -81,7 +82,7 @@ def extract_table_and_all_text(image, boxes, indices, class_ids):
 
         try:
             lines = reader.readtext(roi, detail=0)
-        except Exception:
+        except:
             lines = []
 
         for line in lines:
@@ -116,14 +117,14 @@ def draw_boxes(image, boxes, indices, class_ids):
 # 🎯 Streamlit UI
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor (No Unit Classification)</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align:center;'>🧾 Lab Report OCR Extractor (Optimized for Accuracy)</h2>", unsafe_allow_html=True)
 st.markdown(
     "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> to test and upload from this: "
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True,
 )
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div><br>", unsafe_allow_html=True)
-st.info("Please upload one or more lab report images to start extraction.")
+st.markdown("<div style='text-align:center;'>📂 Please upload one or more lab report images to start extraction.</div><br>", unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
@@ -141,7 +142,7 @@ if uploaded_files:
                 if len(indices) == 0:
                     st.warning("⚠️ No fields detected in this image.")
                     continue
-                df = extract_table_and_all_text(image, boxes, indices, class_ids)
+                df = extract_table_text(image, boxes, indices, class_ids)
 
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
