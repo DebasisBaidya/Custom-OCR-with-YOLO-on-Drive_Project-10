@@ -123,8 +123,13 @@ st.markdown(
     "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True,
 )
-st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div><br>", unsafe_allow_html=True)
-st.markdown("<div style='text-align:center;'>📂 Please upload one or more lab report images to start extraction.</div><br>", unsafe_allow_html=True)
+
+st.markdown("""
+<div style='text-align:center;'>
+📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
+📂 Please upload one or more lab report images to start extraction.
+</div><br>
+""", unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
