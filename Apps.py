@@ -1,3 +1,4 @@
+
 import os
 import cv2
 import numpy as np
@@ -79,7 +80,7 @@ def extract_fields(image, boxes, indices, class_ids, ocr_engine):
                 reader = easyocr.Reader(['en'], gpu=False)
                 lines = reader.readtext(roi, detail=0)
             else:
-                pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+                pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
                 lines = pytesseract.image_to_string(roi).splitlines()
         except:
             lines = []
@@ -129,31 +130,27 @@ st.markdown(
 if "ocr_engine" not in st.session_state:
     st.session_state.ocr_engine = "EasyOCR"
 
-# 👉 I am creating center-aligned header and buttons for OCR selection
+# 👉 I am creating center-aligned OCR engine toggle with highlight
 st.markdown("<div style='text-align:center;'>🧠 <b>Select OCR Engine</b></div>", unsafe_allow_html=True)
 col1, col2, col3 = st.columns([1, 3, 1])
 with col2:
-    b1, b2 = st.columns(2)
-    with b1:
-        if st.button("EasyOCR"):
-            st.session_state.ocr_engine = "EasyOCR"
-    with b2:
-        if st.button("Pytesseract"):
-            st.session_state.ocr_engine = "Pytesseract"
+    selected = st.session_state.ocr_engine
+    ocr_choice = st.selectbox(
+        "", ["EasyOCR", "Pytesseract"],
+        index=0 if selected == "EasyOCR" else 1,
+        key="ocr_engine",
+        label_visibility="collapsed"
+    )
 
-# 👉 I am applying visual highlight to the selected engine button
-selected_style = f"""
-<div style='text-align:center; margin-top:10px;'>
-    Selected: <span style='color:red; font-weight:bold;'>{st.session_state.ocr_engine}</span>
-</div>
-"""
-st.markdown(selected_style, unsafe_allow_html=True)
+# 👉 I am showing selected engine visually highlighted inline
+highlight = f"<div style='text-align:center;'>Selected: <span style='color:green; font-weight:bold;'>{ocr_choice}</span></div>"
+st.markdown(highlight, unsafe_allow_html=True)
 
-# 👉 I am warning users to install pytesseract if selected
-if st.session_state.ocr_engine == "Pytesseract":
-    st.markdown("<div style='text-align:center; color:gray;'>⚠️ Requires Tesseract installed at: <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code></div>", unsafe_allow_html=True)
+# 👉 I am warning users if Pytesseract is selected
+if ocr_choice == "Pytesseract":
+    st.markdown("<div style='text-align:center; color:gray;'>⚠️ Requires Tesseract installed at: <code>C:\Program Files\Tesseract-OCR\tesseract.exe</code></div>", unsafe_allow_html=True)
 
-# 👉 I am showing help info on click
+# 👉 I am showing help section
 with st.expander("📘 How it works"):
     st.markdown("""
     1. Upload `.jpg`, `.jpeg`, or `.png` lab reports.
@@ -163,16 +160,17 @@ with st.expander("📘 How it works"):
     5. Table and image are shown, with CSV download.
     """)
 
-# 👉 I am placing the uploader
+# 👉 I am creating file uploader
 st.markdown("<div style='text-align:center;'>📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b></div>", unsafe_allow_html=True)
 uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# 👉 I am processing each file
+# 👉 I am processing each uploaded file
 if uploaded_files:
     model = load_yolo_model()
 
     for file in uploaded_files:
-        st.markdown(f"---\n### 📄 Processing File: `{file.name}`")
+        st.markdown(f"---
+### 📄 Processing File: `{file.name}`")
         image = np.array(Image.open(file).convert("RGB"))
 
         with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
@@ -184,10 +182,10 @@ if uploaded_files:
                 st.warning("⚠️ No fields detected in this image.")
                 continue
 
-            df = extract_fields(image, boxes, indices, class_ids, st.session_state.ocr_engine)
+            df = extract_fields(image, boxes, indices, class_ids, ocr_choice)
             df = merge_fragmented_test_names(df)
 
-        # 👉 I am showing table and detection image
+        # 👉 I am showing results table and image
         st.success("✅ Extraction Complete!")
         st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
@@ -195,7 +193,7 @@ if uploaded_files:
         st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices), use_container_width=True)
 
-        # 👉 I am placing the download and reset buttons
+        # 👉 I am placing download and reset buttons
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.download_button("⬇️ Download CSV", df.to_csv(index=False), file_name=f"{file.name}_ocr.csv", mime="text/csv")
