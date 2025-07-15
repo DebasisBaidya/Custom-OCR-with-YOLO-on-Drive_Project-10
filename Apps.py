@@ -1,5 +1,5 @@
 # --------------------------------------------------
-# 🏗️ I'm importing the required libraries
+# 🌿 I'm importing the required libraries
 # --------------------------------------------------
 import os
 import cv2
@@ -30,7 +30,7 @@ UNIT_NORMALISE = {
     "mg/dl": "mg/dL",
     "mmol/l": "mmol/L",
     "μiu/ml": "µIU/mL",
-    "ulU/m": "µIU/mL",
+    "ulu/m": "µIU/mL",
     "ue/dl": "µIU/mL",
     "no/dl": "ng/dL"
 }
@@ -44,62 +44,13 @@ def _split_value_unit(txt: str):
     return val.strip(), unit.strip()
 
 # --------------------------------------------------
-# 🧠 I'm loading YOLOv5 ONNX model
-# --------------------------------------------------
-def load_yolo_model():
-    model_path = "best.onnx"
-    if not os.path.exists(model_path):
-        st.error("❌ Model file 'best.onnx' not found.")
-        st.stop()
-    model = cv2.dnn.readNetFromONNX(model_path)
-    return model
-
-# --------------------------------------------------
-# 🔍 I'm running YOLOv5 inference
-# --------------------------------------------------
-def predict_yolo(model, image):
-    h, w = image.shape[:2]
-    max_rc = max(h, w)
-    input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
-    input_img[0:h, 0:w] = image
-    blob = cv2.dnn.blobFromImage(
-        input_img, 1 / 255, (640, 640), swapRB=True, crop=False
-    )
-    model.setInput(blob)
-    preds = model.forward()
-    return preds, input_img
-
-# --------------------------------------------------
-# 📦 I'm processing YOLO predictions
-# --------------------------------------------------
-def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
-    boxes, confidences, class_ids = [], [], []
-    detections = preds[0]
-    h, w = input_img.shape[:2]
-    x_factor = w / 640
-    y_factor = h / 640
-    for det in detections:
-        conf = det[4]
-        if conf > conf_thresh:
-            scores = det[5:]
-            class_id = np.argmax(scores)
-            if scores[class_id] > score_thresh:
-                cx, cy, bw, bh = det[:4]
-                x = int((cx - bw / 2) * x_factor)
-                y = int((cy - bh / 2) * y_factor)
-                boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
-                confidences.append(float(conf))
-                class_ids.append(class_id)
-    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
-    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
-
-# --------------------------------------------------
-# 🔡 I'm extracting OCR text for every detected class
+# 🧠 I'm grouping boxes row-wise and extracting class-wise text
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
     grouped = []
+
     for i in indices:
         cls = class_ids[i]
         label = class_map.get(cls, "Field")
@@ -128,7 +79,7 @@ def extract_table_text(image, boxes, indices, class_ids):
             "text": " ".join(text)
         })
 
-    # Group by rows using y_center proximity (±15px)
+    # Group boxes into rows based on y-center proximity
     grouped.sort(key=lambda x: x["y_center"])
     rows = []
     for entry in grouped:
@@ -141,7 +92,6 @@ def extract_table_text(image, boxes, indices, class_ids):
         if not placed:
             rows.append([entry])
 
-    # For each row, assign columns by label
     for row in rows:
         row.sort(key=lambda x: x["x"])
         fields = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
@@ -161,25 +111,6 @@ def extract_table_text(image, boxes, indices, class_ids):
         results[k] += [""] * (max_len - len(results[k]))
 
     return pd.DataFrame(results)
-
-# --------------------------------------------------
-# 🖼️ I'm drawing bounding boxes on original image
-# --------------------------------------------------
-def draw_boxes(image, boxes, indices, class_ids):
-    for i in indices:
-        x, y, w, h = boxes[i]
-        label = class_map.get(class_ids[i], "Field")
-        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(
-            image,
-            label,
-            (x, y - 10 if y - 10 > 10 else y + 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 0, 255),
-            2,
-        )
-    return image
 
 # --------------------------------------------------
 # 🎯 I'm building the Streamlit app UI
@@ -218,6 +149,7 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
+    from yolov5_model import load_yolo_model, predict_yolo, process_predictions, draw_boxes
     model = load_yolo_model()
     for file in uploaded_files:
         st.markdown(
