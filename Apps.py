@@ -101,7 +101,10 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
-    temp_test_names = []
+
+    suffix_stopwords = [
+        "- TOTAL", "-DIRECT", "(INDIRECT)", "- SERUM", "(GGT)", "(SGOT)", "(SGPT)"
+    ]
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
@@ -125,20 +128,25 @@ def extract_table_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
-        for line in lines:
-            clean = line.strip()
-            if not clean:
-                continue
+        if label == "Test Name":
+            combined = []
+            for line in lines:
+                clean = line.strip()
+                if not clean:
+                    continue
+                combined.append(clean)
+                # Stop if the line ends with a known keyword (in UPPER)
+                if any(clean.strip().upper().endswith(sfx) for sfx in suffix_stopwords):
+                    break
+            final_text = " ".join(combined)
+            results[label].append(final_text)
+        else:
+            for line in lines:
+                clean = line.strip()
+                if clean:
+                    results[label].append(clean)
 
-            if label == "Test Name":
-                temp_test_names.append({"text": clean, "y": y})
-            else:
-                results[label].append(clean)
-
-    if temp_test_names:
-        grouped = group_test_name_fragments(temp_test_names)
-        results["Test Name"] = grouped
-
+    # Padding so DataFrame is aligned
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
