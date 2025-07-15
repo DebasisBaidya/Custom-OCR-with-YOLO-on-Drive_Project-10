@@ -105,30 +105,17 @@ def extract_table_text(image, boxes, indices, class_ids):
 
         # Special handling for Test Name
         if label == "Test Name":
-            combined = ""
             for line in lines:
-                if line.upper() == "- TOTAL" and combined:
-                    combined += " - TOTAL"
-                else:
-                    if combined:
-                        combined += " "
-                    combined += line
-            combined = combined.strip()
-            if combined and combined not in seen_texts[label]:
-                seen_texts[label].add(combined)
-                results[label].append(combined)
-        else:
-            for line in lines:
-                if line not in seen_texts[label]:
-                    seen_texts[label].add(line)
-                    results[label].append(line)
+                clean = line.strip()
+                if not clean:
+                    continue
+                # If this is just '- TOTAL', append to previous
+                if clean.upper() == "- TOTAL" and results[label]:
+                    results[label][-1] += " - TOTAL"
+                # Skip duplicate lines
+                elif clean not in results[label]:
+                    results[label].append(clean)
 
-    # Padding so dataframe aligns correctly
-    max_len = max(len(v) for v in results.values()) if results else 0
-    for k in results:
-        results[k] += [""] * (max_len - len(results[k]))
-
-    return pd.DataFrame(results)
 
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
