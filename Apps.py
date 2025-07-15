@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
-import re
 
 # --------------------------------------------------
 # 🧠 I'm defining class mapping for detected fields
@@ -19,6 +18,25 @@ class_map = {
     2: "Units",
     3: "Reference Range"
 }
+
+# --------------------------------------------------
+# 📦 Grouping OCR fragments by vertical proximity
+# --------------------------------------------------
+def group_nearby_text(entries, y_thresh=15):
+    grouped = []
+    if not entries:
+        return grouped
+    entries = sorted(entries, key=lambda x: x['y'])
+    current_group = {"text": [], "y": entries[0]["y"]}
+
+    for item in entries:
+        if abs(item["y"] - current_group["y"]) <= y_thresh:
+            current_group["text"].append(item["text"])
+        else:
+            grouped.append(" ".join(current_group["text"]))
+            current_group = {"text": [item["text"]], "y": item["y"]}
+    grouped.append(" ".join(current_group["text"]))
+    return grouped
 
 # --------------------------------------------------
 # 🧠 I'm loading YOLOv5 ONNX model
@@ -39,9 +57,7 @@ def predict_yolo(model, image):
     max_rc = max(h, w)
     input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
     input_img[0:h, 0:w] = image
-    blob = cv2.dnn.blobFromImage(
-        input_img, 1 / 255, (640, 640), swapRB=True, crop=False
-    )
+    blob = cv2.dnn.blobFromImage(input_img, 1 / 255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
@@ -76,6 +92,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
+    temp_test_names = []
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
@@ -88,13 +105,10 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # 🧹 Basic preprocessing to help EasyOCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(
-            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
+        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(binary)
 
         try:
@@ -106,7 +120,15 @@ def extract_table_text(image, boxes, indices, class_ids):
             clean = line.strip()
             if not clean:
                 continue
-            results[label].append(clean)
+
+            if label == "Test Name":
+                temp_test_names.append({"text": clean, "y": y})
+            else:
+                results[label].append(clean)
+
+    if temp_test_names:
+        grouped = group_nearby_text(temp_test_names)
+        results["Test Name"] = grouped
 
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
@@ -219,10 +241,3 @@ if uploaded_files:
                     st.session_state["extracted_dfs"] = []
                     st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
                     st.rerun()
-
-            # with col_rst:
-            #     if st.button("🧹 Clear All"):
-            #         st.session_state["uploaded_files"] = []
-            #         st.session_state["extracted_dfs"] = []
-            #         st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
-            #         st.rerun()
