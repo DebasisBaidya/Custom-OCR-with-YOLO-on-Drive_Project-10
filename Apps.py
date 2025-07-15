@@ -20,27 +20,27 @@ class_map = {
     3: "Reference Range"
 }
 
-# --------------------------------------------------
-# 🧠 I'm adding helpers to split mixed value‑unit strings
-# --------------------------------------------------
 # ✅ Regex: grabbing “13.5” and “g/dL” separately
-_unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([^\d\s]+.*)$", re.I)
+_unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)(?:\s*)([^\d\s]+.*)$", re.I)
 
-# ✅ Normalising common unit spellings / cases
+# ✅ Normalising unit spellings / cases
 UNIT_NORMALISE = {
-    "g/dl":   "g/dL",
-    "mg/dl":  "mg/dL",
-    "mmol/l": "mmol/L",
-    "μiu/ml": "µIU/mL",
+    "g/dl": "g/dL", "mg/dl": "mg/dL", "mmol/l": "mmol/L", "μiu/ml": "µIU/mL", "iu/ml": "IU/mL",
+    "ng/dl": "ng/dL", "ug/dl": "µg/dL", "μg/dl": "µg/dL", "mlu/ml": "mIU/mL"
+}
+
+FUZZY_UNITS = {
+    "mdl": "mg/dL", "mdL": "mg/dL", "ululav": "µg/dL", "ugci": "µIU/mL",
+    ".14": "µIU/mL", "μlu/ml": "µIU/mL", "uglml": "µg/mL", "uIU/ml": "µIU/mL"
 }
 
 def _split_value_unit(txt: str):
-    """🔍 Returning clean (value, unit); blank unit if none found."""
     m = _unit_rx.match(txt)
     if not m:
-        return txt.strip(), ""          # nothing to split
+        return txt.strip(), ""
     val, unit = m.groups()
-    unit = UNIT_NORMALISE.get(unit.lower(), unit)  # fixing case / symbol
+    unit = unit.strip().lower()
+    unit = UNIT_NORMALISE.get(unit, FUZZY_UNITS.get(unit, unit))
     return val.strip(), unit.strip()
 
 # --------------------------------------------------
@@ -62,9 +62,7 @@ def predict_yolo(model, image):
     max_rc = max(h, w)
     input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
     input_img[0:h, 0:w] = image
-    blob = cv2.dnn.blobFromImage(
-        input_img, 1 / 255, (640, 640), swapRB=True, crop=False
-    )
+    blob = cv2.dnn.blobFromImage(input_img, 1 / 255, (640, 640), swapRB=True, crop=False)
     model.setInput(blob)
     preds = model.forward()
     return preds, input_img
@@ -99,9 +97,8 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
-
     auto_units = []
-    
+
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
@@ -113,9 +110,10 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # Preprocess crop for better OCR
+        # 🔧 Improved Preprocessing
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        gray = cv2.equalizeHist(gray)
+        gray = cv2.resize(gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(binary)
@@ -130,7 +128,10 @@ def extract_table_text(image, boxes, indices, class_ids):
             if not clean:
                 continue
 
-            # Smart splitting of value+unit (if applicable)
+            # Fix broken decimals (e.g. .14 becomes 0.14)
+            if label == "Value" and clean.startswith("."):
+                clean = "0" + clean
+
             if label == "Value":
                 val, unit = _split_value_unit(clean)
                 results["Value"].append(val)
@@ -138,22 +139,35 @@ def extract_table_text(image, boxes, indices, class_ids):
                     results["Units"].append(unit)
                 continue
 
-            # Fixing units misclassified under Reference Range
             if label == "Reference Range":
-                if any(x in clean.lower() for x in ["/", "iu", "ml", "g/", "μ", "µ"]):
+                if any(x in clean.lower() for x in ["/", "iu", "ml", "g/", "μ", "µ", "%", "dl"]):
                     auto_units.append(clean)
                 else:
                     results[label].append(clean)
             else:
                 results[label].append(clean)
 
-    # Add auto-extracted units to Units field
+    # ✨ Fix decimals across rows
+    new_values = []
+    skip_next = False
+    vals = results["Value"]
+    for i, v in enumerate(vals):
+        if skip_next:
+            skip_next = False
+            continue
+        if i + 1 < len(vals) and vals[i+1].startswith("."):
+            merged = v + vals[i+1]
+            new_values.append(merged)
+            skip_next = True
+        else:
+            new_values.append(v)
+    results["Value"] = new_values
+
     results["Units"].extend(auto_units)
 
-    # Padding to equal length
-    max_len = max(len(v) for v in results.values()) if results else 0
+    max_len = len(results["Value"])
     for k in results:
-        results[k] += [""] * (max_len - len(results[k]))
+        results[k] = results[k][:max_len] + [""] * (max_len - len(results[k]))
 
     return pd.DataFrame(results)
 
@@ -192,23 +206,15 @@ st.markdown(
     "target='_blank'>Drive Link</a></div><br>",
     unsafe_allow_html=True,
 )
-
-st.markdown(
-    """
+st.markdown("""
 <div style='text-align:center; margin-bottom:0;'>
 📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
 <small>📂 Please upload one or more lab report images to start extraction.</small>
 </div>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-uploaded_files = st.file_uploader(
-    " ",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True,
-    key=st.session_state.get("uploader_key", "file_uploader"),
-)
+uploaded_files = st.file_uploader(" ", type=["jpg", "jpeg", "png"], accept_multiple_files=True,
+                                   key=st.session_state.get("uploader_key", "file_uploader"))
 
 if uploaded_files:
     model = load_yolo_model()
@@ -217,7 +223,6 @@ if uploaded_files:
             f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>",
             unsafe_allow_html=True,
         )
-
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
@@ -229,20 +234,11 @@ if uploaded_files:
                     continue
                 df = extract_table_text(image, boxes, indices, class_ids)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>✅ Extraction Complete!</h5>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
+        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
@@ -256,12 +252,8 @@ if uploaded_files:
                     mime="text/csv",
                 )
             with col_rst:
-                # --------------------------------------------------
-                # 🧹 I'm clearing all session data & rerunning app
-                # --------------------------------------------------
                 if st.button("🧹 Clear All"):
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
-                    # Changing uploader key to force reset of widget
                     st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
-                    st.rerun()  # 🔁 Reloading the app
+                    st.rerun()
