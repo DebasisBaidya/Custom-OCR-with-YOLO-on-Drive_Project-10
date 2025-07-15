@@ -73,12 +73,10 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
-    seen_lines = set()
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
-
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         x1, y1 = max(0, x), max(0, y)
@@ -87,7 +85,7 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # 🧹 Preprocessing
+        # 🧹 Basic preprocessing to help EasyOCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -99,37 +97,20 @@ def extract_table_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
-        # 🧠 Group handling for "Test Name"
-        if label == "Test Name":
-            buffer = []
-            for line in lines:
-                clean = line.strip()
-                if not clean or clean in seen_lines:
-                    continue
-                if clean.upper() == "- TOTAL" and buffer:
-                    buffer[-1] += " - TOTAL"
-                else:
-                    buffer.append(clean)
-                seen_lines.add(clean)
-            results[label].extend(buffer)
+        for line in lines:
+            clean = line.strip()
+            if not clean:
+                continue
+            # 🧠 NEW: Treat each OCR line as an individual entry
+            results[label].append(clean)
 
-        else:
-            for line in lines:
-                clean = line.strip()
-                if not clean or clean in seen_lines:
-                    continue
-                seen_lines.add(clean)
-                results[label].append(clean)
-
-    # 🧱 Aligning lengths
+    # 🧱 Padding columns so DataFrame aligns properly
     max_len = max(len(v) for v in results.values()) if results else 0
-    if max_len == 0:
-        return None  # explicitly return None to catch in main
-
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
-    return pd.DataFrame(results)
+    df = pd.DataFrame(results)
+    return df
 
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
