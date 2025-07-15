@@ -97,12 +97,13 @@ def extract_table_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
+        seen = set()
         if label == "Test Name":
             for line in lines:
                 clean = line.strip()
-                if not clean:
+                if not clean or clean in seen:
                     continue
-                # ✅ If line is "- TOTAL", append to last Test Name entry
+                seen.add(clean)
                 if clean.upper() == "- TOTAL" and results[label]:
                     results[label][-1] += " - TOTAL"
                 else:
@@ -110,23 +111,10 @@ def extract_table_text(image, boxes, indices, class_ids):
         else:
             for line in lines:
                 clean = line.strip()
-                if clean:
+                if clean and clean not in seen:
+                    seen.add(clean)
                     results[label].append(clean)
-        if label == "Test Name":
-            for line in lines:
-                clean = line.strip()
-                if not clean:
-                    continue
-                # ✅ If line is "- TOTAL", append to last Test Name entry
-                if clean.upper() == "- TOTAL" and results[label]:
-                    results[label][-1] += " - TOTAL"
-                else:
-                    results[label].append(clean)
-        else:
-            for line in lines:
-                clean = line.strip()
-                if clean:
-                    results[label].append(clean)
+
 
 
     # 🧱 Padding columns so DataFrame aligns properly
