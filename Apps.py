@@ -105,20 +105,11 @@ def extract_table_text(image, boxes, indices, class_ids):
 
         # Special handling for Test Name
         if label == "Test Name":
-            temp_lines = []
             for line in lines:
-                clean = line.strip()
-                if not clean:
-                    continue
-                if clean.upper() == "- TOTAL" and temp_lines:
-                    temp_lines[-1] += " - TOTAL"
-                else:
-                    temp_lines.append(clean)
-            # Add only if not already appended (avoid exact duplicates)
-            for t in temp_lines:
-                if t not in results[label]:
-                    results[label].append(t)
-
+                results[label].append(line.strip())
+        else:
+            for line in lines:
+                results[label].append(line.strip())
 
 
 # --------------------------------------------------
