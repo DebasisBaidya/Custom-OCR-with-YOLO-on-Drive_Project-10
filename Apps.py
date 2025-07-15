@@ -131,25 +131,6 @@ def extract_table_text(image, boxes, indices, class_ids):
 
     return pd.DataFrame(results)
 
-
-
-    # 🧱 Padding columns so DataFrame aligns properly
-    max_len = max(len(v) for v in results.values()) if results else 0
-    for k in results:
-        results[k] += [""] * (max_len - len(results[k]))
-
-    df = pd.DataFrame(results)
-    return df
-
-
-    # 🧱 Padding columns so DataFrame aligns properly
-    max_len = max(len(v) for v in results.values()) if results else 0
-    for k in results:
-        results[k] += [""] * (max_len - len(results[k]))
-
-    df = pd.DataFrame(results)
-    return df
-
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
 # --------------------------------------------------
