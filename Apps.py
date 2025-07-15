@@ -100,6 +100,8 @@ def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
 
+    auto_units = []
+    
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
@@ -111,13 +113,11 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # 🧹 Basic preprocessing to help EasyOCR
+        # Preprocess crop for better OCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+        gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(
-            blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
+        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         roi = cv2.bitwise_not(binary)
 
         try:
@@ -130,24 +130,32 @@ def extract_table_text(image, boxes, indices, class_ids):
             if not clean:
                 continue
 
-            # 🧠 NEW: splitting mixed value+unit strings on the fly
-            if label == "Value" and "Units" in results:
+            # Smart splitting of value+unit (if applicable)
+            if label == "Value":
                 val, unit = _split_value_unit(clean)
                 results["Value"].append(val)
                 if unit:
                     results["Units"].append(unit)
-                continue  # next OCR line
+                continue
 
-            # 📌 Regular behaviour for all other cases
-            results[label].append(clean)
+            # Fixing units misclassified under Reference Range
+            if label == "Reference Range":
+                if any(x in clean.lower() for x in ["/", "iu", "ml", "g/", "μ", "µ"]):
+                    auto_units.append(clean)
+                else:
+                    results[label].append(clean)
+            else:
+                results[label].append(clean)
 
-    # 🧱 Padding columns so DataFrame aligns properly
+    # Add auto-extracted units to Units field
+    results["Units"].extend(auto_units)
+
+    # Padding to equal length
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
-    df = pd.DataFrame(results)
-    return df
+    return pd.DataFrame(results)
 
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
