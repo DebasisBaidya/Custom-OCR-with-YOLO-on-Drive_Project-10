@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
-import re
 
 # --------------------------------------------------
 # 🧠 I'm defining class mapping for detected fields
@@ -53,7 +52,7 @@ def extract_table_text(image, boxes, indices, class_ids):
                 "text": joined
             })
 
-    # Sort and group rows based on Y center proximity
+    # Sort and group rows based on vertical alignment
     grouped_data.sort(key=lambda x: x["y_center"])
     rows = []
     for item in grouped_data:
@@ -64,7 +63,7 @@ def extract_table_text(image, boxes, indices, class_ids):
         else:
             rows.append([item])
 
-    # Compile extracted fields row by row
+    # Create structured DataFrame
     results = {k: [] for k in class_map.values()}
     for row in rows:
         row.sort(key=lambda x: x["x"])
@@ -94,7 +93,6 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
-
 st.markdown(
     """
 <div style='text-align:center; margin-bottom:0;'>
@@ -116,7 +114,7 @@ uploaded_files = st.file_uploader(
 # 🧠 I'm defining YOLOv5 ONNX loading & prediction
 # --------------------------------------------------
 def load_yolo_model():
-    model = cv2.dnn.readNetFromONNX('models/best.onnx')
+    model = cv2.dnn.readNetFromONNX('Model6/weights/best.onnx')
     model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
@@ -135,7 +133,6 @@ def predict_yolo(model, image):
 def process_predictions(preds, input_image, conf_threshold=0.4, score_threshold=0.25):
     detections = preds[0]
     boxes, confidences, class_ids = [], [], []
-
     image_h, image_w = input_image.shape[:2]
     x_factor = image_w / 640
     y_factor = image_h / 640
@@ -155,8 +152,7 @@ def process_predictions(preds, input_image, conf_threshold=0.4, score_threshold=
                 class_ids.append(class_id)
 
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, 0.45)
-    indices = indices.flatten() if len(indices) > 0 else []
-    return indices, boxes, class_ids
+    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
 # --------------------------------------------------
 # 🎨 I'm drawing detected bounding boxes
@@ -164,31 +160,27 @@ def process_predictions(preds, input_image, conf_threshold=0.4, score_threshold=
 def draw_boxes(image, boxes, indices, class_ids):
     for i in indices:
         x, y, w, h = boxes[i]
-        cls_id = class_ids[i]
-        label = class_map.get(cls_id, str(cls_id))
+        label = class_map.get(class_ids[i], str(class_ids[i]))
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
         cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
     return image
 
+# --------------------------------------------------
+# 🚀 Processing Uploaded Files
+# --------------------------------------------------
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
-        st.markdown(
-            f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>",
-            unsafe_allow_html=True,
-        )
-
+        st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
                 image = np.array(Image.open(file).convert("RGB"))
                 preds, input_img = predict_yolo(model, image)
                 indices, boxes, class_ids = process_predictions(preds, input_img)
-
                 if len(indices) == 0:
                     st.warning("⚠️ No fields detected in this image.")
                     continue
-
                 df = extract_table_text(image, boxes, indices, class_ids)
 
         st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
@@ -213,7 +205,6 @@ if uploaded_files:
                     st.session_state.clear()
                     st.session_state["uploader_key"] = "file_uploader_" + str(np.random.randint(1_000_000))
                     st.rerun()
-
 
             # with col_rst:
             #     if st.button("🧹 Clear All"):
