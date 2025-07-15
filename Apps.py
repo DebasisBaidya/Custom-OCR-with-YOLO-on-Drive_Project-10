@@ -1,5 +1,5 @@
 # --------------------------------------------------
-# 🌿 I'm importing the required libraries
+# 🏗️ I'm importing the required libraries
 # --------------------------------------------------
 import os
 import cv2
@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
-import re
 
 # --------------------------------------------------
 # 🧠 I'm defining class mapping for detected fields
@@ -21,30 +20,55 @@ class_map = {
 }
 
 # --------------------------------------------------
-# 🧠 I'm splitting value+unit if combined
+# 🧠 I'm loading YOLOv5 ONNX model
 # --------------------------------------------------
-_unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([^\d\s]+.*)$", re.I)
-
-UNIT_NORMALISE = {
-    "g/dl": "g/dL",
-    "mg/dl": "mg/dL",
-    "mmol/l": "mmol/L",
-    "μiu/ml": "µIU/mL",
-    "ulu/m": "µIU/mL",
-    "ue/dl": "µIU/mL",
-    "no/dl": "ng/dL"
-}
-
-def _split_value_unit(txt: str):
-    m = _unit_rx.match(txt)
-    if not m:
-        return txt.strip(), ""
-    val, unit = m.groups()
-    unit = UNIT_NORMALISE.get(unit.lower(), unit)
-    return val.strip(), unit.strip()
+def load_yolo_model():
+    model_path = "best.onnx"
+    if not os.path.exists(model_path):
+        st.error("❌ Model file 'best.onnx' not found.")
+        st.stop()
+    model = cv2.dnn.readNetFromONNX(model_path)
+    return model
 
 # --------------------------------------------------
-# 🧠 I'm grouping boxes row-wise and extracting class-wise text
+# 📸 I'm running YOLOv5 detection on input image
+# --------------------------------------------------
+def predict_yolo(model, image):
+    h, w = image.shape[:2]
+    max_rc = max(h, w)
+    input_img = np.zeros((max_rc, max_rc, 3), dtype=np.uint8)
+    input_img[0:h, 0:w] = image
+    blob = cv2.dnn.blobFromImage(input_img, 1 / 255, (640, 640), swapRB=True, crop=False)
+    model.setInput(blob)
+    preds = model.forward()
+    return preds, input_img
+
+# --------------------------------------------------
+# 📦 I'm post‑processing YOLO outputs
+# --------------------------------------------------
+def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
+    boxes, confidences, class_ids = [], [], []
+    detections = preds[0]
+    h, w = input_img.shape[:2]
+    x_factor = w / 640
+    y_factor = h / 640
+    for det in detections:
+        conf = det[4]
+        if conf > conf_thresh:
+            scores = det[5:]
+            class_id = np.argmax(scores)
+            if scores[class_id] > score_thresh:
+                cx, cy, bw, bh = det[:4]
+                x = int((cx - bw / 2) * x_factor)
+                y = int((cy - bh / 2) * y_factor)
+                boxes.append([x, y, int(bw * x_factor), int(bh * y_factor)])
+                confidences.append(float(conf))
+                class_ids.append(class_id)
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
+    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
+
+# --------------------------------------------------
+# 🔡 I'm extracting OCR text for every detected field
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
@@ -79,7 +103,7 @@ def extract_table_text(image, boxes, indices, class_ids):
             "text": " ".join(text)
         })
 
-    # Group boxes into rows based on y-center proximity
+    # Group boxes by row
     grouped.sort(key=lambda x: x["y_center"])
     rows = []
     for entry in grouped:
@@ -100,10 +124,9 @@ def extract_table_text(image, boxes, indices, class_ids):
             if label in fields:
                 fields[label] += (" " + item["text"]).strip()
 
-        val, unit = _split_value_unit(fields["Value"])
-        results["Value"].append(val)
-        results["Units"].append(unit or fields["Units"])
         results["Test Name"].append(fields["Test Name"])
+        results["Value"].append(fields["Value"])
+        results["Units"].append(fields["Units"])
         results["Reference Range"].append(fields["Reference Range"])
 
     max_len = max(len(results[k]) for k in results)
@@ -111,6 +134,25 @@ def extract_table_text(image, boxes, indices, class_ids):
         results[k] += [""] * (max_len - len(results[k]))
 
     return pd.DataFrame(results)
+
+# --------------------------------------------------
+# 🖼️ I'm drawing bounding boxes on original image
+# --------------------------------------------------
+def draw_boxes(image, boxes, indices, class_ids):
+    for i in indices:
+        x, y, w, h = boxes[i]
+        label = class_map.get(class_ids[i], "Field")
+        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.putText(
+            image,
+            label,
+            (x, y - 10 if y - 10 > 10 else y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            2,
+        )
+    return image
 
 # --------------------------------------------------
 # 🎯 I'm building the Streamlit app UI
@@ -149,7 +191,6 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    from yolov5_model import load_yolo_model, predict_yolo, process_predictions, draw_boxes
     model = load_yolo_model()
     for file in uploaded_files:
         st.markdown(
