@@ -114,7 +114,7 @@ uploaded_files = st.file_uploader(
 # 🧠 I'm defining YOLOv5 ONNX loading & prediction
 # --------------------------------------------------
 def load_yolo_model():
-    model = cv2.dnn.readNetFromONNX('Model6/weights/best.onnx')
+    model = cv2.dnn.readNetFromONNX('models/best.onnx')
     model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
     return model
