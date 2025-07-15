@@ -20,34 +20,6 @@ class_map = {
 }
 
 # --------------------------------------------------
-# 📦 Grouping test name fragments using suffix hints
-# --------------------------------------------------
-def group_test_name_fragments(entries, y_thresh=15):
-    suffix_stopwords = [
-        "- total", "- direct", "- indirect", "- serum", "- total protein",
-        "(ggt)", "(sgot)", "(sgpt)", "(t3)", "(t4)", "(tsh)", "(ft3)", "(ft4)", "ratio"
-    ]
-    grouped = []
-    if not entries:
-        return grouped
-    entries = sorted(entries, key=lambda x: x['y'])
-    current_group = {"text": [], "y": entries[0]["y"]}
-
-    for item in entries:
-        txt = item["text"]
-        current_group["text"].append(txt)
-        if any(txt.lower().strip().endswith(sfx) for sfx in suffix_stopwords):
-            grouped.append(" ".join(current_group["text"]))
-            current_group = {"text": [], "y": item["y"]}
-        elif abs(item["y"] - current_group["y"]) > y_thresh:
-            grouped.append(" ".join(current_group["text"]))
-            current_group = {"text": [], "y": item["y"]}
-
-    if current_group["text"]:
-        grouped.append(" ".join(current_group["text"]))
-    return grouped
-
-# --------------------------------------------------
 # 🧠 I'm loading YOLOv5 ONNX model
 # --------------------------------------------------
 def load_yolo_model():
@@ -102,10 +74,6 @@ def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
 
-    suffix_stopwords = [
-        "- TOTAL", "-DIRECT", "(INDIRECT)", "- SERUM", "(GGT)", "(SGOT)", "(SGPT)"
-    ]
-
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
             continue
@@ -117,6 +85,7 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
+        # 🧹 Basic preprocessing to help EasyOCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -128,25 +97,14 @@ def extract_table_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
-        if label == "Test Name":
-            combined = []
-            for line in lines:
-                clean = line.strip()
-                if not clean:
-                    continue
-                combined.append(clean)
-                # Stop if the line ends with a known keyword (in UPPER)
-                if any(clean.strip().upper().endswith(sfx) for sfx in suffix_stopwords):
-                    break
-            final_text = " ".join(combined)
-            results[label].append(final_text)
-        else:
-            for line in lines:
-                clean = line.strip()
-                if clean:
-                    results[label].append(clean)
+        for line in lines:
+            clean = line.strip()
+            if not clean:
+                continue
+            # 🧠 NEW: Treat each OCR line as an individual entry
+            results[label].append(clean)
 
-    # Padding so DataFrame is aligned
+    # 🧱 Padding columns so DataFrame aligns properly
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
@@ -207,6 +165,9 @@ uploaded_files = st.file_uploader(
     key=st.session_state.get("uploader_key", "file_uploader"),
 )
 
+# --------------------------------------------------
+# 🚀 I'm processing the uploaded files
+# --------------------------------------------------
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
@@ -242,6 +203,13 @@ if uploaded_files:
         )
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
+        # --------------------------------------------------
+        # 🐞 I'm printing detected class-wise bounding boxes (for debugging)
+        # --------------------------------------------------
+        print("Detected class boxes:")
+        for i in indices:
+            print(f"{class_map.get(class_ids[i], 'Unknown')}: Box = {boxes[i]}")
+
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             col_dl, col_rst = st.columns(2)
@@ -253,6 +221,9 @@ if uploaded_files:
                     mime="text/csv",
                 )
             with col_rst:
+                # --------------------------------------------------
+                # 🧹 I'm clearing all session data & rerunning app
+                # --------------------------------------------------
                 if st.button("🧹 Clear All"):
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
