@@ -99,8 +99,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
-
-    field_groups = {}
+    grouped = []
     for i in indices:
         cls = class_ids[i]
         label = class_map.get(cls, "Field")
@@ -119,33 +118,43 @@ def extract_table_text(image, boxes, indices, class_ids):
             text = []
 
         text = [t.strip() for t in text if t.strip()]
-        if label not in field_groups:
-            field_groups[label] = []
-        field_groups[label].extend(text)
+        if not text:
+            continue
 
-    # Smart post-processing with fix for split decimals
-    value_lines = field_groups.get("Value", [])
-    fixed_values = []
-    i = 0
-    while i < len(value_lines):
-        val = value_lines[i].strip()
-        if val.startswith(".") and fixed_values:
-            fixed_values[-1] += val
-        else:
-            fixed_values.append(val)
-        i += 1
+        grouped.append({
+            "label": label,
+            "x": x,
+            "y_center": y + h // 2,
+            "text": " ".join(text)
+        })
 
-    values, units = [], []
-    for val in fixed_values:
-        v, u = _split_value_unit(val)
-        values.append(v)
-        if u:
-            units.append(u)
+    # Group by rows using y_center proximity (±15px)
+    grouped.sort(key=lambda x: x["y_center"])
+    rows = []
+    for entry in grouped:
+        placed = False
+        for row in rows:
+            if abs(row[0]["y_center"] - entry["y_center"]) < 15:
+                row.append(entry)
+                placed = True
+                break
+        if not placed:
+            rows.append([entry])
 
-    results["Value"] = values
-    results["Units"] = field_groups.get("Units", []) + units
-    results["Test Name"] = field_groups.get("Test Name", [])
-    results["Reference Range"] = field_groups.get("Reference Range", [])
+    # For each row, assign columns by label
+    for row in rows:
+        row.sort(key=lambda x: x["x"])
+        fields = {"Test Name": "", "Value": "", "Units": "", "Reference Range": ""}
+        for item in row:
+            label = item["label"]
+            if label in fields:
+                fields[label] += (" " + item["text"]).strip()
+
+        val, unit = _split_value_unit(fields["Value"])
+        results["Value"].append(val)
+        results["Units"].append(unit or fields["Units"])
+        results["Test Name"].append(fields["Test Name"])
+        results["Reference Range"].append(fields["Reference Range"])
 
     max_len = max(len(results[k]) for k in results)
     for k in results:
