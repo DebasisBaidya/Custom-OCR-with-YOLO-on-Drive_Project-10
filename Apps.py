@@ -73,6 +73,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
     results = {key: [] for key in class_map.values()}
+    seen_texts = {key: set() for key in class_map.values()}  # To track duplicates
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
@@ -85,7 +86,7 @@ def extract_table_text(image, boxes, indices, class_ids):
         if crop.size == 0:
             continue
 
-        # 🧹 Basic preprocessing to help EasyOCR
+        # OCR Preprocessing
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -97,33 +98,37 @@ def extract_table_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
-        seen = set()
+        # Remove empty & whitespace lines
+        lines = [line.strip() for line in lines if line.strip()]
+        if not lines:
+            continue
+
+        # Special handling for Test Name
         if label == "Test Name":
+            combined = ""
             for line in lines:
-                clean = line.strip()
-                if not clean or clean in seen:
-                    continue
-                seen.add(clean)
-                if clean.upper() == "- TOTAL" and results[label]:
-                    results[label][-1] += " - TOTAL"
+                if line.upper() == "- TOTAL" and combined:
+                    combined += " - TOTAL"
                 else:
-                    results[label].append(clean)
+                    if combined:
+                        combined += " "
+                    combined += line
+            combined = combined.strip()
+            if combined and combined not in seen_texts[label]:
+                seen_texts[label].add(combined)
+                results[label].append(combined)
         else:
             for line in lines:
-                clean = line.strip()
-                if clean and clean not in seen:
-                    seen.add(clean)
-                    results[label].append(clean)
+                if line not in seen_texts[label]:
+                    seen_texts[label].add(line)
+                    results[label].append(line)
 
-
-
-    # 🧱 Padding columns so DataFrame aligns properly
+    # Padding so dataframe aligns correctly
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
 
-    df = pd.DataFrame(results)
-    return df
+    return pd.DataFrame(results)
 
 # --------------------------------------------------
 # 🖼️ I'm drawing bounding boxes on original image
