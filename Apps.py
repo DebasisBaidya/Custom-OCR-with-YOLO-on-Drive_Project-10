@@ -1,5 +1,5 @@
 # --------------------------------------------------
-# 🏗️ I'm importing the required libraries
+# 🌿 I'm importing the required libraries
 # --------------------------------------------------
 import os
 import cv2
@@ -7,8 +7,110 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image
-from yolov5_model import extract_table_text, class_map
 import easyocr
+import re
+
+# --------------------------------------------------
+# 🧠 I'm defining class mapping for detected fields
+# --------------------------------------------------
+class_map = {
+    0: "Test Name",
+    1: "Value",
+    2: "Units",
+    3: "Reference Range"
+}
+
+# --------------------------------------------------
+# 🧠 I'm extracting table data from image using OCR
+# --------------------------------------------------
+def extract_table_text(image, boxes, indices, class_ids):
+    reader = easyocr.Reader(["en"], gpu=False)
+    grouped_data = []
+
+    for i in indices:
+        cls = class_ids[i]
+        label = class_map.get(cls, "Field")
+        x, y, w, h = boxes[i]
+        crop = image[y:y+h, x:x+w]
+
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        roi = cv2.bitwise_not(binary)
+
+        try:
+            text = reader.readtext(roi, detail=0)
+        except:
+            text = []
+
+        joined = " ".join([t.strip() for t in text if t.strip()])
+        if joined:
+            grouped_data.append({
+                "label": label,
+                "x": x,
+                "y_center": y + h // 2,
+                "text": joined
+            })
+
+    # Sort and group rows based on Y center proximity
+    grouped_data.sort(key=lambda x: x["y_center"])
+    rows = []
+    for item in grouped_data:
+        for row in rows:
+            if abs(row[0]["y_center"] - item["y_center"]) < 15:
+                row.append(item)
+                break
+        else:
+            rows.append([item])
+
+    # Compile extracted fields row by row
+    results = {k: [] for k in class_map.values()}
+    for row in rows:
+        row.sort(key=lambda x: x["x"])
+        row_data = {k: "" for k in class_map.values()}
+        for item in row:
+            row_data[item["label"]] += (" " + item["text"]).strip()
+        for k in class_map.values():
+            results[k].append(row_data[k])
+
+    return pd.DataFrame(results)
+
+# --------------------------------------------------
+# 🎯 I'm building the Streamlit app UI
+# --------------------------------------------------
+st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
+
+st.markdown(
+    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    """
+<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> 
+    to test and upload from this: 
+    <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' 
+    target='_blank'>Drive Link</a></div><br>
+""",
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+<div style='text-align:center; margin-bottom:0;'>
+📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
+<small>📂 Please upload one or more lab report images to start extraction.</small>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+uploaded_files = st.file_uploader(
+    " ",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+    key=st.session_state.get("uploader_key", "file_uploader"),
+)
 
 # --------------------------------------------------
 # 🧠 I'm defining YOLOv5 ONNX loading & prediction
@@ -67,42 +169,6 @@ def draw_boxes(image, boxes, indices, class_ids):
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
         cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
     return image
-
-# --------------------------------------------------
-# 🎯 I'm building the Streamlit app UI
-# --------------------------------------------------
-st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
-
-st.markdown(
-    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    """
-<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> 
-    to test and upload from this: 
-    <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' 
-    target='_blank'>Drive Link</a></div><br>
-""",
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-<div style='text-align:center; margin-bottom:0;'>
-📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
-<small>📂 Please upload one or more lab report images to start extraction.</small>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-uploaded_files = st.file_uploader(
-    " ",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True,
-    key=st.session_state.get("uploader_key", "file_uploader"),
-)
 
 if uploaded_files:
     model = load_yolo_model()
