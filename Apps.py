@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
+import re
 
 # --------------------------------------------------
 # 🧠 I'm defining class mapping for detected fields
@@ -22,7 +23,6 @@ class_map = {
 # --------------------------------------------------
 # 🧠 I'm splitting value+unit if combined
 # --------------------------------------------------
-import re
 _unit_rx = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([^\d\s]+.*)$", re.I)
 
 UNIT_NORMALISE = {
@@ -30,6 +30,9 @@ UNIT_NORMALISE = {
     "mg/dl": "mg/dL",
     "mmol/l": "mmol/L",
     "μiu/ml": "µIU/mL",
+    "ulU/m": "µIU/mL",
+    "ue/dl": "µIU/mL",
+    "no/dl": "ng/dL"
 }
 
 def _split_value_unit(txt: str):
@@ -120,13 +123,25 @@ def extract_table_text(image, boxes, indices, class_ids):
             field_groups[label] = []
         field_groups[label].extend(text)
 
-    # Smart post-processing
+    # Smart post-processing with fix for split decimals
+    value_lines = field_groups.get("Value", [])
+    fixed_values = []
+    i = 0
+    while i < len(value_lines):
+        val = value_lines[i].strip()
+        if val.startswith(".") and fixed_values:
+            fixed_values[-1] += val
+        else:
+            fixed_values.append(val)
+        i += 1
+
     values, units = [], []
-    for val in field_groups.get("Value", []):
+    for val in fixed_values:
         v, u = _split_value_unit(val)
         values.append(v)
         if u:
             units.append(u)
+
     results["Value"] = values
     results["Units"] = field_groups.get("Units", []) + units
     results["Test Name"] = field_groups.get("Test Name", [])
