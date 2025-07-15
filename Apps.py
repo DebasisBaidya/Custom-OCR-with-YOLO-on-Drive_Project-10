@@ -20,9 +20,13 @@ class_map = {
 }
 
 # --------------------------------------------------
-# 📦 Grouping OCR fragments by vertical proximity
+# 📦 Grouping test name fragments using suffix hints
 # --------------------------------------------------
-def group_nearby_text(entries, y_thresh=15):
+def group_test_name_fragments(entries, y_thresh=15):
+    suffix_stopwords = [
+        "- total", "- direct", "- indirect", "- serum", "- total protein",
+        "(ggt)", "(sgot)", "(sgpt)", "(t3)", "(t4)", "(tsh)", "(ft3)", "(ft4)", "ratio"
+    ]
     grouped = []
     if not entries:
         return grouped
@@ -30,12 +34,17 @@ def group_nearby_text(entries, y_thresh=15):
     current_group = {"text": [], "y": entries[0]["y"]}
 
     for item in entries:
-        if abs(item["y"] - current_group["y"]) <= y_thresh:
-            current_group["text"].append(item["text"])
-        else:
+        txt = item["text"]
+        current_group["text"].append(txt)
+        if any(txt.lower().strip().endswith(sfx) for sfx in suffix_stopwords):
             grouped.append(" ".join(current_group["text"]))
-            current_group = {"text": [item["text"]], "y": item["y"]}
-    grouped.append(" ".join(current_group["text"]))
+            current_group = {"text": [], "y": item["y"]}
+        elif abs(item["y"] - current_group["y"]) > y_thresh:
+            grouped.append(" ".join(current_group["text"]))
+            current_group = {"text": [], "y": item["y"]}
+
+    if current_group["text"]:
+        grouped.append(" ".join(current_group["text"]))
     return grouped
 
 # --------------------------------------------------
@@ -127,7 +136,7 @@ def extract_table_text(image, boxes, indices, class_ids):
                 results[label].append(clean)
 
     if temp_test_names:
-        grouped = group_nearby_text(temp_test_names)
+        grouped = group_test_name_fragments(temp_test_names)
         results["Test Name"] = grouped
 
     max_len = max(len(v) for v in results.values()) if results else 0
