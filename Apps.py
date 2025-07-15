@@ -97,12 +97,16 @@ def extract_table_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
-        for line in lines:
-            clean = line.strip()
-            if not clean:
-                continue
-            # 🧠 NEW: Treat each OCR line as an individual entry
-            results[label].append(clean)
+        # ✅ FIX: Join all OCR lines inside this box for Test Name rows
+        if label == "Test Name":
+            combined = " ".join(line.strip() for line in lines if line.strip())
+            if combined:
+                results[label].append(combined)
+        else:
+            for line in lines:
+                clean = line.strip()
+                if clean:
+                    results[label].append(clean)
 
     # 🧱 Padding columns so DataFrame aligns properly
     max_len = max(len(v) for v in results.values()) if results else 0
@@ -187,20 +191,11 @@ if uploaded_files:
                     continue
                 df = extract_table_text(image, boxes, indices, class_ids)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>✅ Extraction Complete!</h5>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
+        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
         # --------------------------------------------------
