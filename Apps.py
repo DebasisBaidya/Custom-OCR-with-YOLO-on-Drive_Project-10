@@ -23,7 +23,7 @@ class_map = {
 # 🧠 I'm loading YOLOv5 ONNX model
 # --------------------------------------------------
 def load_yolo_model():
-    model_path = "best.onnx"
+    model_path = "models/best.onnx"
     if not os.path.exists(model_path):
         st.error("❌ Model file 'best.onnx' not found.")
         st.stop()
