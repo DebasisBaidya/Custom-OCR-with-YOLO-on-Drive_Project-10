@@ -72,11 +72,12 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
-    detected = []
+    detections = []
 
     for i in indices:
         x, y, w, h = boxes[i]
-        label = class_map.get(class_ids[i], "Field")
+        label_id = class_ids[i]
+        label = class_map.get(label_id, "Field")
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y1:y2, x1:x2]
@@ -97,39 +98,39 @@ def extract_table_text(image, boxes, indices, class_ids):
 
         text = " ".join([line.strip() for line in lines if line.strip()])
         if text:
-            detected.append({
+            center_y = y + h // 2
+            detections.append({
                 "label": label,
+                "label_id": label_id,
                 "text": text,
                 "x": x,
-                "y": y
+                "y": y,
+                "center_y": center_y
             })
 
-    # Sort by vertical (y) first, then by horizontal (x)
-    detected = sorted(detected, key=lambda k: (k["y"], k["x"]))
+    # Group by approximate vertical position (center_y)
+    detections = sorted(detections, key=lambda k: (k["center_y"], k["x"]))
 
-    # Group by row using Y-coordinate threshold
     rows = []
-    current_row = []
-    current_y = -100
+    group = []
 
-    for det in detected:
-        if abs(det["y"] - current_y) > 40:
-            if current_row:
-                rows.append(current_row)
-            current_row = [det]
-            current_y = det["y"]
+    for i, item in enumerate(detections):
+        if not group:
+            group.append(item)
         else:
-            current_row.append(det)
+            if abs(item["center_y"] - group[-1]["center_y"]) <= 35:
+                group.append(item)
+            else:
+                rows.append(group)
+                group = [item]
+    if group:
+        rows.append(group)
 
-    if current_row:
-        rows.append(current_row)
-
-    # Build structured table row-by-row
     structured = []
-    for row in rows:
-        row_dict = {label: "" for label in class_map.values()}
-        for item in row:
-            row_dict[item["label"]] = item["text"]
+    for group in rows:
+        row_dict = {v: "" for v in class_map.values()}
+        for field in group:
+            row_dict[field["label"]] = field["text"]
         structured.append(row_dict)
 
     df = pd.DataFrame(structured)
