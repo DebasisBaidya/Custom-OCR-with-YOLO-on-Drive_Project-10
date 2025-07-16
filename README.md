@@ -24,10 +24,9 @@ Manually entering such data is slow, repetitive, and error-prone. So I designed 
 
 This is not just a proof of concept — it's a fully working pipeline with model training, preprocessing, post-processing, UI deployment, and CSV export.
 
-> 🔗 Try the app: [🌐 Streamlit Live](https://your-streamlit-app-url)
-> 🎬 Watch Demo: [📽 YouTube Video](https://your-demo-video-link)
+- > 🔗 Try the app: [🌐 Streamlit Live](https://custom-ocr-with-yolo-on-drive-debasis-baidya.streamlit.app/)
+- > 🎬 Watch Demo: [📽 YouTube Video](https://your-demo-video-link)
 
-> 🔗 [🌐 Streamlit App](https://your-streamlit-app-url) | 🎥 [📽 Demo Video](https://your-demo-video-link)
 
 ---
 
@@ -100,17 +99,6 @@ The pipeline follows these logical steps:
 
 ---
 
-## 🖼️ Streamlit Interface (UI Preview)
-
-| Upload & Annotate                               | Extracted Table & CSV                          | Preview Annotated Output                         |
-| ----------------------------------------------- | ---------------------------------------------- | ------------------------------------------------ |
-| ![streamlit1](screenshots/streamlit_upload.jpg) | ![streamlit2](screenshots/streamlit_table.jpg) | ![streamlit3](screenshots/streamlit_preview.jpg) |
-
-> 🔗 Try the app: [🌐 Streamlit Live](https://your-streamlit-app-url)
-> 🎬 Watch Demo: [📽 YouTube Video](https://your-demo-video-link)
-
----
-
 ## 📊 Results
 
 * 📌 **Accuracy**: High mAP\@0.5 for bounding box detection
@@ -120,11 +108,11 @@ The pipeline follows these logical steps:
 
 ---
 
-## 🧪 Sample Output
+## 🖼️ Streamlit Interface (UI Preview)
 
 | Input Image                     | YOLO Detection                     | OCR Output                        |
 | ------------------------------- | ---------------------------------- | --------------------------------- |
-| ![input](screenshots/input.jpg) | ![yolo](screenshots/detection.jpg) | ![output](screenshots/output.jpg) |
+| ![input](Screenshots/input.jpg) | ![yolo](Screenshots/detection.jpg) | ![output](Screenshots/output.jpg) |
 
 > 📦 Exports: `ocr_result.csv`, `annotated_image.jpg`
 
@@ -234,7 +222,7 @@ drive.mount('/content/drive')
 ## 🖼️ Streamlit UI Screenshot
 
 <p align="center">
-  <img src="screenshots/streamlit_full.png" alt="streamlit_ui" />
+  <img src="Screenshots/streamlit_full.png" alt="streamlit_ui" />
 </p>
 
 ---
