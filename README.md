@@ -154,7 +154,7 @@ drive.mount('/content/drive')
 !pip install -r requirements.txt
 
 🚀 Trained YOLOv5 model with custom dataset
-!WANDB_MODE=disabled python train.py --data data.yaml --weights runs/train/Model2/weights/best.pt --img 640 --batch-size 2 --name Model --epochs 200
+!python train.py --data data.yaml --weights runs/train/Model2/weights/best.pt --img 640 --batch-size 2 --name Model --epochs 200
 ```
 
 ✅ Training was done on **Google Colab (GPU runtime)** for speed and convenience.
