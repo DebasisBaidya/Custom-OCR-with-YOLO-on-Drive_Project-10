@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
-from collections import defaultdict
 
 # --------------------------------------------------
 # 🧠 I'm defining class mapping for detected fields
@@ -69,15 +68,13 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
 # --------------------------------------------------
-# 🔠 I'm extracting OCR text for every detected field (Group by row)
+# 🔡 I'm extracting and grouping OCR text by row and column
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
-    entries = []
+    detected = []
 
     for i in indices:
-        if i >= len(boxes) or i >= len(class_ids):
-            continue
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
         x1, y1 = max(0, x), max(0, y)
@@ -100,35 +97,42 @@ def extract_table_text(image, boxes, indices, class_ids):
 
         text = " ".join([line.strip() for line in lines if line.strip()])
         if text:
-            entries.append({
+            detected.append({
                 "label": label,
                 "text": text,
                 "x": x,
                 "y": y
             })
 
-    # 🧱 Group detected text by approximate Y-coordinate (i.e., table rows)
-    row_clusters = defaultdict(dict)
-    row_id = 0
-    for entry in sorted(entries, key=lambda e: e["y"]):
-        assigned = False
-        for r in row_clusters:
-            if abs(entry["y"] - row_clusters[r].get("y", entry["y"])) < 40:
-                row_clusters[r][entry["label"]] = entry["text"]
-                assigned = True
-                break
-        if not assigned:
-            row_clusters[row_id][entry["label"]] = entry["text"]
-            row_clusters[row_id]["y"] = entry["y"]
-            row_id += 1
+    # Sort by vertical (y) first, then by horizontal (x)
+    detected = sorted(detected, key=lambda k: (k["y"], k["x"]))
 
-    # 🧱 Convert grouped results to DataFrame
-    final_rows = []
-    for r in sorted(row_clusters.values(), key=lambda d: d["y"]):
-        row = {key: r.get(key, "") for key in class_map.values()}
-        final_rows.append(row)
+    # Group by row using Y-coordinate threshold
+    rows = []
+    current_row = []
+    current_y = -100
 
-    df = pd.DataFrame(final_rows)
+    for det in detected:
+        if abs(det["y"] - current_y) > 40:
+            if current_row:
+                rows.append(current_row)
+            current_row = [det]
+            current_y = det["y"]
+        else:
+            current_row.append(det)
+
+    if current_row:
+        rows.append(current_row)
+
+    # Build structured table row-by-row
+    structured = []
+    for row in rows:
+        row_dict = {label: "" for label in class_map.values()}
+        for item in row:
+            row_dict[item["label"]] = item["text"]
+        structured.append(row_dict)
+
+    df = pd.DataFrame(structured)
     return df
 
 # --------------------------------------------------
@@ -155,47 +159,32 @@ def draw_boxes(image, boxes, indices, class_ids):
 # --------------------------------------------------
 st.set_page_config(page_title="Lab Report OCR", layout="centered", page_icon="🧾")
 
-st.markdown(
-    "<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    """
-    <div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> 
-    to test and upload from this: 
-    <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' 
-    target='_blank'>Drive Link</a></div><br>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("<h2 style='text-align:center;'>🩺🧪 Lab Report OCR Extractor 🧾</h2>", unsafe_allow_html=True)
 
-st.markdown(
-    """
-    <div style='text-align:center; margin-bottom:0;'>
-    📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
-    <small>📂 Please upload one or more lab report images to start extraction.</small>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> 
+from this <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' target='_blank'>Drive Link</a>
+</div><br>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div style='text-align:center; margin-bottom:0;'>
+📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
+<small>📂 Upload one or more lab report images to start extraction.</small>
+</div>
+""", unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
     " ",
     type=["jpg", "jpeg", "png"],
     accept_multiple_files=True,
-    key=st.session_state.get("uploader_key", "file_uploader"),
+    key=st.session_state.get("uploader_key", "file_uploader")
 )
 
-# --------------------------------------------------
-# 🚀 I'm processing the uploaded files
-# --------------------------------------------------
 if uploaded_files:
     model = load_yolo_model()
     for file in uploaded_files:
-        st.markdown(
-            f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"<h4 style='text-align:center;'>📄 Processing File: {file.name}</h4>", unsafe_allow_html=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
@@ -208,20 +197,11 @@ if uploaded_files:
                     continue
                 df = extract_table_text(image, boxes, indices, class_ids)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>✅ Extraction Complete!</h5>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>✅ Extraction Complete!</h5>", unsafe_allow_html=True)
+        st.markdown("<h5 style='text-align:center;'>🧾 Extracted Table</h5>", unsafe_allow_html=True)
         st.dataframe(df, use_container_width=True)
 
-        st.markdown(
-            "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>", unsafe_allow_html=True)
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
         c1, c2, c3 = st.columns([1, 2, 1])
@@ -232,7 +212,7 @@ if uploaded_files:
                     "⬇️ Download CSV",
                     df.to_csv(index=False),
                     file_name=f"{file.name}_ocr.csv",
-                    mime="text/csv",
+                    mime="text/csv"
                 )
             with col_rst:
                 if st.button("🧹 Clear All"):
