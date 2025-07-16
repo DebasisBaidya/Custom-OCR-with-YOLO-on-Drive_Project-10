@@ -154,7 +154,7 @@ drive.mount('/content/drive')
 !pip install -r requirements.txt
 
 🚀 Trained YOLOv5 model with custom dataset
-!python train.py --img 640 --batch 2 --epochs 200 --data /content/data.yaml --weights yolov5s.pt --name lab_report_model
+!WANDB_MODE=disabled python train.py --data data.yaml --weights runs/train/Model2/weights/best.pt --img 640 --batch-size 2 --name Model --epochs 200
 ```
 
 ✅ Training was done on **Google Colab (GPU runtime)** for speed and convenience.
@@ -165,7 +165,17 @@ drive.mount('/content/drive')
 
 ```bash
 📤 Exported best weights to ONNX format for OpenCV inference
-!python export.py --weights runs/train/lab_report_model/weights/best.pt --img 640 --batch 1 --include onnx
+# ✅ Set path to your trained weights
+best_pt_path = "/content/drive/MyDrive/CustomOCR/yolov5/runs/train/Model5/weights/best.pt"
+
+# ✅ Changed directory to yolov5 before running export
+%cd /content/drive/MyDrive/CustomOCR/yolov5
+
+# ✅ Run export to generate ONNX model in same folder as best.pt
+!python export.py --weights {best_pt_path} --include onnx --simplify --opset 12
+
+# ✅ Moved ONNX model to /models/
+!mv runs/train/Model5/weights/best.onnx /content/drive/MyDrive/CustomOCR/models/best.onnx
 ```
 
 ---
