@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 import easyocr
+from collections import defaultdict
 
 # --------------------------------------------------
 # 🧠 I'm defining class mapping for detected fields
@@ -68,11 +69,11 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
     return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
 
 # --------------------------------------------------
-# 🔡 I'm extracting OCR text for every detected field
+# 🔠 I'm extracting OCR text for every detected field (Group by row)
 # --------------------------------------------------
 def extract_table_text(image, boxes, indices, class_ids):
     reader = easyocr.Reader(["en"], gpu=False)
-    results = {key: [] for key in class_map.values()}
+    entries = []
 
     for i in indices:
         if i >= len(boxes) or i >= len(class_ids):
@@ -82,10 +83,10 @@ def extract_table_text(image, boxes, indices, class_ids):
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(image.shape[1], x + w), min(image.shape[0], y + h)
         crop = image[y1:y2, x1:x2]
+
         if crop.size == 0:
             continue
 
-        # 🧹 Basic preprocessing to help EasyOCR
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -97,19 +98,37 @@ def extract_table_text(image, boxes, indices, class_ids):
         except Exception:
             lines = []
 
-        for line in lines:
-            clean = line.strip()
-            if not clean:
-                continue
-            # 🧠 NEW: Treat each OCR line as an individual entry
-            results[label].append(clean)
+        text = " ".join([line.strip() for line in lines if line.strip()])
+        if text:
+            entries.append({
+                "label": label,
+                "text": text,
+                "x": x,
+                "y": y
+            })
 
-    # 🧱 Padding columns so DataFrame aligns properly
-    max_len = max(len(v) for v in results.values()) if results else 0
-    for k in results:
-        results[k] += [""] * (max_len - len(results[k]))
+    # 🧱 Group detected text by approximate Y-coordinate (i.e., table rows)
+    row_clusters = defaultdict(dict)
+    row_id = 0
+    for entry in sorted(entries, key=lambda e: e["y"]):
+        assigned = False
+        for r in row_clusters:
+            if abs(entry["y"] - row_clusters[r].get("y", entry["y"])) < 40:
+                row_clusters[r][entry["label"]] = entry["text"]
+                assigned = True
+                break
+        if not assigned:
+            row_clusters[row_id][entry["label"]] = entry["text"]
+            row_clusters[row_id]["y"] = entry["y"]
+            row_id += 1
 
-    df = pd.DataFrame(results)
+    # 🧱 Convert grouped results to DataFrame
+    final_rows = []
+    for r in sorted(row_clusters.values(), key=lambda d: d["y"]):
+        row = {key: r.get(key, "") for key in class_map.values()}
+        final_rows.append(row)
+
+    df = pd.DataFrame(final_rows)
     return df
 
 # --------------------------------------------------
@@ -141,20 +160,22 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    "<div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> "
-    "to test and upload from this: "
-    "<a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' "
-    "target='_blank'>Drive Link</a></div><br>",
+    """
+    <div style='text-align:center;'>📥 <b>Download sample Lab Reports (JPG)</b> 
+    to test and upload from this: 
+    <a href='https://drive.google.com/drive/folders/1zgCl1A3HIqOIzgkBrWUFRhVV0dJZsCXC?usp=sharing' 
+    target='_blank'>Drive Link</a></div><br>
+    """,
     unsafe_allow_html=True,
 )
 
 st.markdown(
     """
-<div style='text-align:center; margin-bottom:0;'>
-📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
-<small>📂 Please upload one or more lab report images to start extraction.</small>
-</div>
-""",
+    <div style='text-align:center; margin-bottom:0;'>
+    📤 <b>Upload lab reports (.jpg, .jpeg, or .png format)</b><br>
+    <small>📂 Please upload one or more lab report images to start extraction.</small>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -203,13 +224,6 @@ if uploaded_files:
         )
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
-        # --------------------------------------------------
-        # 🐞 I'm printing detected class-wise bounding boxes (for debugging)
-        # --------------------------------------------------
-        print("Detected class boxes:")
-        for i in indices:
-            print(f"{class_map.get(class_ids[i], 'Unknown')}: Box = {boxes[i]}")
-
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             col_dl, col_rst = st.columns(2)
@@ -221,9 +235,6 @@ if uploaded_files:
                     mime="text/csv",
                 )
             with col_rst:
-                # --------------------------------------------------
-                # 🧹 I'm clearing all session data & rerunning app
-                # --------------------------------------------------
                 if st.button("🧹 Clear All"):
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
