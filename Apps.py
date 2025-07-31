@@ -101,15 +101,20 @@ def extract_table_text(image, boxes, indices, class_ids):
             clean = line.strip()
             if not clean:
                 continue
-            # 🧠 NEW: Treat each OCR line as an individual entry
             results[label].append(clean)
 
-    # 🧱 Padding columns so DataFrame aligns properly
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
-
     df = pd.DataFrame(results)
+
+    # ✅ Add confidence score as % of non-empty entries per column
+    conf_scores = {
+        col: round(100 * (df[col].astype(str).str.strip() != '').sum() / len(df), 1) if len(df) > 0 else 0
+        for col in df.columns
+    }
+    df.columns = [f"{col} ({conf_scores[col]}%)" for col in df.columns]
+
     return df
 
 # --------------------------------------------------
@@ -130,6 +135,17 @@ def draw_boxes(image, boxes, indices, class_ids):
             2,
         )
     return image
+
+# --------------------------------------------------
+# 🆕 I'm extracting patient name from image (top-left text)
+# --------------------------------------------------
+def extract_patient_name(image):
+    reader = easyocr.Reader(["en"], gpu=False)
+    results = reader.readtext(image)
+    if results:
+        # Just grab the first line of readable text
+        return results[0][1]
+    return "Unknown"
 
 # --------------------------------------------------
 # 🎯 I'm building the Streamlit app UI
@@ -180,6 +196,14 @@ if uploaded_files:
         with c2:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
                 image = np.array(Image.open(file).convert("RGB"))
+
+                # 🆕 Extract and display patient name
+                patient_name = extract_patient_name(image)
+                st.markdown(
+                    f"<h5 style='text-align:center;'>👤 Patient Name: <code>{patient_name}</code></h5>",
+                    unsafe_allow_html=True,
+                )
+
                 preds, input_img = predict_yolo(model, image)
                 indices, boxes, class_ids = process_predictions(preds, input_img)
                 if len(indices) == 0:
@@ -192,7 +216,7 @@ if uploaded_files:
             unsafe_allow_html=True,
         )
         st.markdown(
-            "<h5 style='text-align:center;'>🧾 Extracted Table</h5>",
+            "<h5 style='text-align:center;'>🧾 Extracted Table (with Confidence)</h5>",
             unsafe_allow_html=True,
         )
         st.dataframe(df, use_container_width=True)
@@ -203,9 +227,6 @@ if uploaded_files:
         )
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
 
-        # --------------------------------------------------
-        # 🐞 I'm printing detected class-wise bounding boxes (for debugging)
-        # --------------------------------------------------
         print("Detected class boxes:")
         for i in indices:
             print(f"{class_map.get(class_ids[i], 'Unknown')}: Box = {boxes[i]}")
@@ -221,9 +242,6 @@ if uploaded_files:
                     mime="text/csv",
                 )
             with col_rst:
-                # --------------------------------------------------
-                # 🧹 I'm clearing all session data & rerunning app
-                # --------------------------------------------------
                 if st.button("🧹 Clear All"):
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
