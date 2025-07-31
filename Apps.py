@@ -101,10 +101,8 @@ def extract_table_text(image, boxes, indices, class_ids):
             clean = line.strip()
             if not clean:
                 continue
-            # 🧠 NEW: Treat each OCR line as an individual entry
             results[label].append(clean)
 
-    # 🧱 Padding columns so DataFrame aligns properly
     max_len = max(len(v) for v in results.values()) if results else 0
     for k in results:
         results[k] += [""] * (max_len - len(results[k]))
@@ -113,23 +111,26 @@ def extract_table_text(image, boxes, indices, class_ids):
     return df
 
 # --------------------------------------------------
-# 🖼️ I'm drawing bounding boxes on original image with confidence score
+# 🖼️ I'm drawing bounding boxes with bold, high-contrast labels
 # --------------------------------------------------
 def draw_boxes(image, boxes, indices, class_ids, confidences=None):
     for i in indices:
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
-        conf_text = f"{label} ({confidences[i]:.2f})" if confidences else label
+        conf = confidences[i] if confidences else 0.0
+        conf_text = f"{label} ({conf:.2f})"
+
+        # Draw filled black rectangle behind the text
+        (text_w, text_h), _ = cv2.getTextSize(conf_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        text_x1 = x
+        text_y1 = y - text_h - 6 if y - text_h - 6 > 0 else y + h + 6
+        text_x2 = x + text_w + 6
+        text_y2 = text_y1 + text_h + 8
+        cv2.rectangle(image, (text_x1, text_y1), (text_x2, text_y2), (0, 0, 0), -1)
+
+        # Draw text over the rectangle
+        cv2.putText(image, conf_text, (text_x1 + 3, text_y2 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(
-            image,
-            conf_text,
-            (x, y - 10 if y - 10 > 10 else y + 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 0, 255),
-            2,
-        )
     return image
 
 # --------------------------------------------------
@@ -204,9 +205,7 @@ if uploaded_files:
         )
         st.image(draw_boxes(image.copy(), boxes, indices, class_ids, confidences), use_container_width=True)
 
-        # --------------------------------------------------
-        # 🐞 I'm printing detected class-wise bounding boxes (for debugging)
-        # --------------------------------------------------
+        # 🐞 Debugging: print detected class-wise bounding boxes
         print("Detected class boxes:")
         for i in indices:
             print(f"{class_map.get(class_ids[i], 'Unknown')}: Box = {boxes[i]} (Conf = {confidences[i]:.2f})")
@@ -222,9 +221,6 @@ if uploaded_files:
                     mime="text/csv",
                 )
             with col_rst:
-                # --------------------------------------------------
-                # 🧹 I'm clearing all session data & rerunning app
-                # --------------------------------------------------
                 if st.button("🧹 Clear All"):
                     st.session_state["uploaded_files"] = []
                     st.session_state["extracted_dfs"] = []
