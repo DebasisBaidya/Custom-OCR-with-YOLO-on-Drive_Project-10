@@ -65,7 +65,7 @@ def process_predictions(preds, input_img, conf_thresh=0.4, score_thresh=0.25):
                 confidences.append(float(conf))
                 class_ids.append(class_id)
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_thresh, 0.45)
-    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids
+    return indices.flatten() if len(indices) > 0 else [], boxes, class_ids, confidences
 
 # --------------------------------------------------
 # 🔡 I'm extracting OCR text for every detected field
@@ -113,16 +113,17 @@ def extract_table_text(image, boxes, indices, class_ids):
     return df
 
 # --------------------------------------------------
-# 🖼️ I'm drawing bounding boxes on original image
+# 🖼️ I'm drawing bounding boxes on original image with confidence score
 # --------------------------------------------------
-def draw_boxes(image, boxes, indices, class_ids):
+def draw_boxes(image, boxes, indices, class_ids, confidences=None):
     for i in indices:
         x, y, w, h = boxes[i]
         label = class_map.get(class_ids[i], "Field")
+        conf_text = f"{label} ({confidences[i]:.2f})" if confidences else label
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
         cv2.putText(
             image,
-            label,
+            conf_text,
             (x, y - 10 if y - 10 > 10 else y + 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
@@ -181,7 +182,7 @@ if uploaded_files:
             with st.spinner("🔍 Running YOLOv5 Detection and OCR..."):
                 image = np.array(Image.open(file).convert("RGB"))
                 preds, input_img = predict_yolo(model, image)
-                indices, boxes, class_ids = process_predictions(preds, input_img)
+                indices, boxes, class_ids, confidences = process_predictions(preds, input_img)
                 if len(indices) == 0:
                     st.warning("⚠️ No fields detected in this image.")
                     continue
@@ -201,14 +202,14 @@ if uploaded_files:
             "<h5 style='text-align:center;'>📦 Detected Fields on Image</h5>",
             unsafe_allow_html=True,
         )
-        st.image(draw_boxes(image.copy(), boxes, indices, class_ids), use_container_width=True)
+        st.image(draw_boxes(image.copy(), boxes, indices, class_ids, confidences), use_container_width=True)
 
         # --------------------------------------------------
         # 🐞 I'm printing detected class-wise bounding boxes (for debugging)
         # --------------------------------------------------
         print("Detected class boxes:")
         for i in indices:
-            print(f"{class_map.get(class_ids[i], 'Unknown')}: Box = {boxes[i]}")
+            print(f"{class_map.get(class_ids[i], 'Unknown')}: Box = {boxes[i]} (Conf = {confidences[i]:.2f})")
 
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
