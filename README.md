@@ -25,7 +25,7 @@ Manually entering such data is slow, repetitive, and error-prone. So I designed 
 This is not just a proof of concept — it's a fully working pipeline with model training, preprocessing, post-processing, UI deployment, and CSV export.
 
 - > 🔗 Try the app: [🌐 Streamlit Live](https://custom-ocr-with-yolo-on-drive-debasis-baidya.streamlit.app/)
-- > 🎬 Watch Demo: [📽 YouTube Video](https://your-demo-video-link)
+- > 🎬 Watch Demo: [📽 YouTube Video](https://youtu.be/ErXRWPH1j68)
 
 
 ---
